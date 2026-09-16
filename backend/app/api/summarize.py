@@ -1,0 +1,1058 @@
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from typing import Literal, Annotated
+
+from app.core.config import MAX_FILE_SIZE, UPLOAD_DIR
+
+from app.schemas.summarize import (
+    SummaryResponse,
+    KeyPointsResponse,
+    HierarchicalSummaryResponse
+)
+
+from app.services.file_service import extract_text
+
+from app.services.groq_service import (
+    summarize_text,
+    extract_key_points,
+    compare_documents,
+    update_summary,
+    hierarchical_summarize
+)
+
+from app.services.media_service import (
+    validate_media_file,
+    transcribe_media
+)
+
+from app.services.youtube_service import fetch_youtube_transcript
+
+import os
+import uuid
+
+
+router = APIRouter()
+
+
+# ============================================================
+# Configuration
+# ============================================================
+
+ALLOWED_EXTENSIONS = {
+    ".txt",
+    ".pdf",
+    ".docx"
+}
+
+
+# ============================================================
+# File Validation
+# ============================================================
+
+def validate_file(file: UploadFile):
+    """
+    Validate uploaded file type and filename.
+    """
+    safe_filename = os.path.basename(file.filename or "")
+    if not safe_filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No filename provided."
+        )
+
+    extension = os.path.splitext(
+        safe_filename
+    )[1].lower()
+
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file format '{extension}'. "
+                "Supported formats are TXT, PDF, and DOCX."
+            )
+        )
+
+
+# ============================================================
+# Save Uploaded File (Streaming Chunk Validation)
+# ============================================================
+
+def save_uploaded_file(file: UploadFile, max_size: int = MAX_FILE_SIZE) -> str:
+    """
+    Save uploaded file using a unique filename while enforcing
+    streaming byte-size limits to protect disk and memory.
+    """
+    upload_folder = str(UPLOAD_DIR)
+    os.makedirs(
+        upload_folder,
+        exist_ok=True
+    )
+
+    safe_filename = os.path.basename(file.filename or "")
+    extension = os.path.splitext(
+        safe_filename
+    )[1].lower()
+
+    unique_filename = (
+        f"{uuid.uuid4()}{extension}"
+    )
+
+    file_path = os.path.join(
+        upload_folder,
+        unique_filename
+    )
+
+
+    file.file.seek(0)
+    total_size = 0
+    chunk_size = 1024 * 1024  # 1 MB
+
+    try:
+        with open(file_path, "wb") as buffer:
+            while True:
+                chunk = file.file.read(chunk_size)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > max_size:
+                    buffer.close()
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    max_mb = max_size // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"File size exceeds the maximum "
+                            f"allowed size of {max_mb} MB."
+                        )
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save uploaded file: {str(e)}"
+        ) from e
+
+    # --------------------------------------------------------
+    # Empty file
+    # --------------------------------------------------------
+
+    if total_size == 0:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty."
+        )
+
+    return file_path
+
+
+# ============================================================
+# SINGLE DOCUMENT SUMMARIZATION
+# ============================================================
+
+@router.post(
+    "/summarize",
+    response_model=SummaryResponse
+)
+def summarize(
+    file: UploadFile = File(...),
+
+    length: Literal[
+        "short",
+        "medium",
+        "long"
+    ] = Form("medium"),
+
+    format: Literal[
+        "paragraph",
+        "bullets",
+        "table"
+    ] = Form("paragraph"),
+
+    executive: bool = Form(False)
+):
+
+    # --------------------------------------------------------
+    # Validate uploaded file
+    # --------------------------------------------------------
+
+    validate_file(file)
+
+    # --------------------------------------------------------
+    # Save file temporarily
+    # --------------------------------------------------------
+
+    file_path = save_uploaded_file(
+        file
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # Extract text
+        # ----------------------------------------------------
+
+        text = extract_text(
+            file_path
+        )
+
+        if not text or not text.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No readable text was found "
+                    "in the uploaded file."
+                )
+            )
+
+        # ----------------------------------------------------
+        # Generate summary
+        # ----------------------------------------------------
+
+        summary = summarize_text(
+            text=text,
+            length=length,
+            format=format,
+            executive=executive
+        )
+
+        return SummaryResponse(
+            summary=summary
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+    finally:
+
+        # ----------------------------------------------------
+        # Delete temporary file
+        # ----------------------------------------------------
+
+        if os.path.exists(file_path):
+
+            os.remove(
+                file_path
+            )
+
+
+# ============================================================
+# MULTIPLE DOCUMENT SUMMARIZATION
+# ============================================================
+
+@router.post(
+    "/summarize-multiple",
+    response_model=SummaryResponse
+)
+def summarize_multiple(
+    files: list[UploadFile] = File(...),
+
+    length: Literal[
+        "short",
+        "medium",
+        "long"
+    ] = Form("medium"),
+
+    format: Literal[
+        "paragraph",
+        "bullets",
+        "table"
+    ] = Form("paragraph"),
+
+    executive: bool = Form(False)
+):
+
+    # --------------------------------------------------------
+    # Make sure at least one file was supplied
+    # --------------------------------------------------------
+
+    if not files:
+
+        raise HTTPException(
+            status_code=400,
+            detail="At least one file is required."
+        )
+
+    file_paths = []
+
+    try:
+
+        combined_text = ""
+
+        # ----------------------------------------------------
+        # Process every uploaded document
+        # ----------------------------------------------------
+
+        for uploaded_file in files:
+
+            # Validate extension
+            validate_file(
+                uploaded_file
+            )
+
+            # Save temporarily
+            file_path = save_uploaded_file(
+                uploaded_file
+            )
+
+            file_paths.append(
+                file_path
+            )
+
+            # Extract text
+            text = extract_text(
+                file_path
+            )
+
+            if not text or not text.strip():
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "No readable text was found "
+                        f"in '{uploaded_file.filename}'."
+                    )
+                )
+
+            # ------------------------------------------------
+            # Preserve document boundaries
+            # ------------------------------------------------
+
+            combined_text += (
+                "\n\n"
+                f"--- Document: {uploaded_file.filename} ---"
+                "\n\n"
+            )
+
+            combined_text += text
+
+        # ----------------------------------------------------
+        # Final validation
+        # ----------------------------------------------------
+
+        if not combined_text.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No readable text was found "
+                    "in the uploaded files."
+                )
+            )
+
+        # ----------------------------------------------------
+        # Generate combined summary
+        # ----------------------------------------------------
+
+        summary = summarize_text(
+            text=combined_text,
+            length=length,
+            format=format,
+            executive=executive
+        )
+
+        return SummaryResponse(
+            summary=summary
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+    finally:
+
+        # ----------------------------------------------------
+        # Delete all temporary files
+        # ----------------------------------------------------
+
+        for file_path in file_paths:
+
+            if os.path.exists(file_path):
+
+                os.remove(
+                    file_path
+                )
+
+
+# ============================================================
+# KEY POINT EXTRACTION
+# ============================================================
+
+@router.post(
+    "/key-points",
+    response_model=KeyPointsResponse
+)
+def key_points(
+    file: UploadFile = File(...),
+    number_of_points: int = Form(5)
+):
+
+    # --------------------------------------------------------
+    # Validate number of requested points
+    # --------------------------------------------------------
+
+    if number_of_points < 1 or number_of_points > 20:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Number of points must be "
+                "between 1 and 20."
+            )
+        )
+
+    # --------------------------------------------------------
+    # Validate uploaded file
+    # --------------------------------------------------------
+
+    validate_file(
+        file
+    )
+
+    # --------------------------------------------------------
+    # Save file temporarily
+    # --------------------------------------------------------
+
+    file_path = save_uploaded_file(
+        file
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # Extract text from TXT/PDF/DOCX
+        # ----------------------------------------------------
+
+        text = extract_text(
+            file_path
+        )
+
+        if not text or not text.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No readable text was found "
+                    "in the uploaded file."
+                )
+            )
+
+        # ----------------------------------------------------
+        # Extract key points using Groq
+        # ----------------------------------------------------
+
+        result = extract_key_points(
+            text=text,
+            number_of_points=number_of_points
+        )
+
+        # ----------------------------------------------------
+        # Convert Groq numbered-list response
+        # into a Python list
+        # ----------------------------------------------------
+
+        points = []
+
+        for line in result.splitlines():
+
+            line = line.strip()
+
+            if not line:
+                continue
+
+            # Remove common numbering formats:
+            #
+            # 1. Point
+            # 2) Point
+            # - Point
+            # * Point
+            #
+            cleaned_line = line.lstrip(
+                "0123456789.-) "
+            ).strip()
+
+            if cleaned_line:
+
+                points.append(
+                    cleaned_line
+                )
+
+        # ----------------------------------------------------
+        # Make sure Groq returned something
+        # ----------------------------------------------------
+
+        if not points:
+
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to extract key points."
+            )
+
+        # ----------------------------------------------------
+        # Return only requested number of points
+        # ----------------------------------------------------
+
+        points = points[
+            :number_of_points
+        ]
+
+        return KeyPointsResponse(
+            key_points=points
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+    finally:
+
+        # ----------------------------------------------------
+        # Delete temporary file
+        # ----------------------------------------------------
+
+        if os.path.exists(file_path):
+
+            os.remove(
+                file_path
+            )
+
+
+# ============================================================
+# COMPARATIVE DOCUMENT SUMMARIZATION
+# ============================================================
+
+@router.post(
+    "/compare",
+    response_model=SummaryResponse
+)
+def compare(
+    file_a: UploadFile = File(...),
+    file_b: UploadFile = File(...)
+):
+    """
+    Compare two uploaded documents.
+    """
+
+    file_a_path = None
+    file_b_path = None
+
+    try:
+
+        # ====================================================
+        # VALIDATE FILE A
+        # ====================================================
+
+        validate_file(file_a)
+
+        # ====================================================
+        # VALIDATE FILE B
+        # ====================================================
+
+        validate_file(file_b)
+
+        # ====================================================
+        # SAVE FILE A
+        # ====================================================
+
+        file_a_path = save_uploaded_file(file_a)
+
+        # ====================================================
+        # SAVE FILE B
+        # ====================================================
+
+        file_b_path = save_uploaded_file(file_b)
+
+        # ====================================================
+        # EXTRACT TEXT FROM FILE A
+        # ====================================================
+
+        text_a = extract_text(file_a_path)
+
+        if not text_a or not text_a.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No readable text was found in "
+                    f"'{file_a.filename}'."
+                )
+            )
+
+        # ====================================================
+        # EXTRACT TEXT FROM FILE B
+        # ====================================================
+
+        text_b = extract_text(file_b_path)
+
+        if not text_b or not text_b.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No readable text was found in "
+                    f"'{file_b.filename}'."
+                )
+            )
+
+        # ====================================================
+        # COMPARE DOCUMENTS USING GROQ
+        # ====================================================
+
+        comparison = compare_documents(
+            text_a=text_a,
+            text_b=text_b,
+            document_a_name=file_a.filename,
+            document_b_name=file_b.filename
+        )
+
+        # ====================================================
+        # RETURN RESPONSE
+        # ====================================================
+
+        return SummaryResponse(
+            summary=comparison
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+    finally:
+
+        # ====================================================
+        # DELETE TEMPORARY FILE A
+        # ====================================================
+
+        if (
+            file_a_path
+            and os.path.exists(file_a_path)
+        ):
+            os.remove(file_a_path)
+
+        # ====================================================
+        # DELETE TEMPORARY FILE B
+        # ====================================================
+
+        if (
+            file_b_path
+            and os.path.exists(file_b_path)
+        ):
+            os.remove(file_b_path)
+
+# ============================================================
+# AUDIO / VIDEO SUMMARIZATION
+# ============================================================
+
+@router.post(
+    "/summarize-media",
+    response_model=SummaryResponse
+)
+def summarize_media(
+    file: Annotated[
+        UploadFile,
+        File(description="Audio or video file to summarize")
+    ],
+
+    length: Annotated[
+        Literal["short", "medium", "long"],
+        Form()
+    ] = "medium",
+
+    format: Annotated[
+        Literal["paragraph", "bullets", "table"],
+        Form()
+    ] = "paragraph",
+
+    executive: Annotated[
+        bool,
+        Form()
+    ] = False
+):
+    """
+    Summarize an uploaded audio or video file.
+
+    Processing pipeline:
+
+        Audio / Video
+             ↓
+           FFmpeg
+             ↓
+       Audio extraction
+             ↓
+       faster-whisper
+             ↓
+         Transcript
+             ↓
+           Groq
+             ↓
+          Summary
+    """
+
+    media_path = None
+
+    try:
+
+        # ----------------------------------------------------
+        # Validate media file
+        # ----------------------------------------------------
+
+        validate_media_file(
+            file.filename
+        )
+
+        # ----------------------------------------------------
+        # Save uploaded media with streaming validation
+        # ----------------------------------------------------
+
+        media_path = save_uploaded_file(file)
+
+        # ----------------------------------------------------
+        # Transcribe media
+        # ----------------------------------------------------
+
+        transcript = transcribe_media(
+            media_path
+        )
+
+        if not transcript or not transcript.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No speech could be detected "
+                    "in the uploaded media."
+                )
+            )
+
+        # ----------------------------------------------------
+        # Summarize transcript
+        # ----------------------------------------------------
+
+        summary = summarize_text(
+            text=transcript,
+            length=length,
+            format=format,
+            executive=executive
+        )
+
+        # ----------------------------------------------------
+        # Return summary
+        # ----------------------------------------------------
+
+        return SummaryResponse(
+            summary=summary
+        )
+
+    except ValueError as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+    finally:
+
+        # ----------------------------------------------------
+        # Delete uploaded media
+        # ----------------------------------------------------
+
+        if (
+            media_path
+            and os.path.exists(media_path)
+        ):
+
+            os.remove(
+                media_path
+            )
+
+# ============================================================
+# UPDATE / DELTA SUMMARY
+# ============================================================
+
+@router.post(
+    "/update-summary",
+    response_model=SummaryResponse
+)
+def update_summary_endpoint(
+    previous_summary: Annotated[
+        str,
+        Form(description="Previous summary")
+    ],
+
+    current_text: Annotated[
+        str,
+        Form(description="Current document text")
+    ]
+):
+    """
+    Compare a previous summary with the current document
+    and identify meaningful updates.
+    """
+
+    try:
+
+        # ----------------------------------------------------
+        # Validate previous summary
+        # ----------------------------------------------------
+
+        if not previous_summary.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail="Previous summary cannot be empty."
+            )
+
+        # ----------------------------------------------------
+        # Validate current document
+        # ----------------------------------------------------
+
+        if not current_text.strip():
+
+            raise HTTPException(
+                status_code=400,
+                detail="Current document cannot be empty."
+            )
+
+        # ----------------------------------------------------
+        # Generate update summary
+        # ----------------------------------------------------
+
+        result = update_summary(
+            previous_summary=previous_summary,
+            current_text=current_text
+        )
+
+        # ----------------------------------------------------
+        # Return response
+        # ----------------------------------------------------
+
+        return SummaryResponse(
+            summary=result
+        )
+
+    except ValueError as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+
+# ============================================================
+# HIERARCHICAL SUMMARIZATION ENDPOINT
+# ============================================================
+
+@router.post(
+    "/summarize-hierarchical",
+    response_model=HierarchicalSummaryResponse
+)
+def summarize_hierarchical_endpoint(
+    file: UploadFile = File(
+        ...,
+        description="Document file (TXT, PDF, DOCX) to summarize hierarchically"
+    ),
+
+    length: Literal[
+        "short",
+        "medium",
+        "long"
+    ] = Form("medium"),
+
+    format: Literal[
+        "paragraph",
+        "bullets",
+        "table"
+    ] = Form("paragraph"),
+
+    executive: bool = Form(False),
+
+    chunk_size: int = Form(
+        2000,
+        description="Target character size per section chunk (500-20000)"
+    )
+):
+    """
+    Hierarchically summarize a document using a Map-Reduce architecture:
+    - Splits text into coherent sections/chunks.
+    - Summarizes each chunk individually (Map).
+    - Synthesizes section summaries into a final cohesive summary (Reduce).
+    """
+
+    # --------------------------------------------------------
+    # Validate uploaded file
+    # --------------------------------------------------------
+    validate_file(file)
+
+    # --------------------------------------------------------
+    # Save file temporarily
+    # --------------------------------------------------------
+    file_path = save_uploaded_file(file)
+
+    try:
+        # ----------------------------------------------------
+        # Extract text from document
+        # ----------------------------------------------------
+        text = extract_text(file_path)
+
+        if not text or not text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No readable text was found in the uploaded file."
+            )
+
+        # ----------------------------------------------------
+        # Execute hierarchical summarization
+        # ----------------------------------------------------
+        result = hierarchical_summarize(
+            text=text,
+            chunk_size=chunk_size,
+            length=length,
+            format=format,
+            executive=executive
+        )
+
+        return HierarchicalSummaryResponse(**result)
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
+
+    finally:
+        # ----------------------------------------------------
+        # Cleanup temporary file
+        # ----------------------------------------------------
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+
+
+# ============================================================
+# YOUTUBE VIDEO TRANSCRIPT SUMMARIZATION
+# ============================================================
+
+@router.post(
+    "/summarize-youtube",
+    response_model=SummaryResponse
+)
+def summarize_youtube_endpoint(
+    url: Annotated[
+        str,
+        Form(description="YouTube video URL (e.g. https://www.youtube.com/watch?v=...)")
+    ],
+
+    length: Literal[
+        "short",
+        "medium",
+        "long"
+    ] = Form("medium"),
+
+    format: Literal[
+        "paragraph",
+        "bullets",
+        "table"
+    ] = Form("paragraph"),
+
+    executive: bool = Form(False)
+):
+    """
+    Summarize a YouTube video directly from its closed-caption / transcript text.
+    """
+    if not url or not url.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="YouTube URL cannot be empty."
+        )
+
+    try:
+        # 1. Fetch transcript from YouTube
+        transcript = fetch_youtube_transcript(url.strip())
+
+        if not transcript or not transcript.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No speech or transcript text could be retrieved for this YouTube video."
+            )
+
+        # 2. Summarize using existing Groq service
+        summary = summarize_text(
+            text=transcript,
+            length=length,
+            format=format,
+            executive=executive
+        )
+
+        return SummaryResponse(
+            summary=summary
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e

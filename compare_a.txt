@@ -1,0 +1,1 @@
+Product A is a cloud-based AI platform designed for small and medium-sized businesses. It supports automated data analysis, basic machine learning workflows, and a simple dashboard. Product A uses a monthly subscription model and focuses on ease of use and quick deployment.

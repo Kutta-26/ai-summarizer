@@ -1,0 +1,23 @@
+# Root .dockerignore
+.git/
+.venv/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend/uploads/*
+!backend/uploads/.gitkeep
+uploads/*
+.env
+.env.*
+!.env.example
+*.tmp
+*.log
+.pytest_cache/
+tests/__pycache__/
+backend/__pycache__/
+speech_test.mp4
+test.mp3
+test.mp4
+test.wav
+voice_test.mp3
+screenshots/

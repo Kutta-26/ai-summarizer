@@ -1,0 +1,1 @@
+Cloud computing provides scalable infrastructure for modern AI applications. Organizations can deploy machine learning models using cloud services without maintaining all computing infrastructure themselves. However, cloud-based AI systems must consider security, privacy, cost, reliability, and responsible data management.
