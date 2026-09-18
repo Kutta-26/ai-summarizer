@@ -141,21 +141,146 @@ docker compose up -d
 
 ---
 
-## 📡 API Endpoints
+## 📡 API Reference & Developer Experience
 
-| Endpoint | Method | Input Parameters | Description |
-| :--- | :---: | :--- | :--- |
-| `/health` | `GET` | None | Service heartbeat & availability with latency header |
-| `/docs` | `GET` | None | Interactive Swagger UI API documentation |
-| `/openapi.json` | `GET` | None | OpenAPI 3.0.3 specification schema |
-| `/summarize` | `POST` | `file`, `length`, `format`, `executive` | Single document summarization (TXT, PDF, DOCX) |
-| `/key-points` | `POST` | `file`, `number_of_points` | Key takeaways extraction (1–20 points) |
-| `/summarize-multiple` | `POST` | `files` (array), `length`, `format`, `executive` | Multi-document cross-synthesis |
-| `/compare` | `POST` | `file_a`, `file_b` | Side-by-side comparative analysis |
-| `/summarize-media` | `POST` | `file`, `length`, `format`, `executive` | Audio/video transcription & summary |
-| `/update-summary` | `POST` | `previous_summary`, `current_text` | Delta change detection |
-| `/summarize-hierarchical` | `POST` | `file`, `chunk_size`, `length`, `format`, `executive` | Map-Reduce long-document summary |
-| `/summarize-youtube` | `POST` | `url`, `length`, `format`, `executive` | YouTube transcript summarization |
+The FastAPI backend exposes high-performance REST endpoints documented natively via OpenAPI 3.0.3 and Swagger UI.
+
+- **Local Base URL**: `http://127.0.0.1:8000`
+- **Interactive Swagger UI**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **OpenAPI 3.0.3 Specification**: [http://127.0.0.1:8000/openapi.json](http://127.0.0.1:8000/openapi.json)
+- **Observability**: Every response includes an `X-Process-Time` execution latency header (e.g. `0.0016s`).
+
+---
+
+### Endpoints Matrix
+
+| Category | Endpoint | Method | Input Parameters | Content-Type | Description |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| **System** | `/` | `GET` | None | `application/json` | API root welcome & connectivity verification |
+| **System** | `/health` | `GET` | None | `application/json` | Heartbeat health status and latency monitoring |
+| **Document Summarization** | `/summarize` | `POST` | `file`, `length`, `format`, `executive` | `multipart/form-data` | Single document summarization (.txt, .pdf, .docx) |
+| **Document Summarization** | `/summarize-multiple` | `POST` | `files` (array), `length`, `format`, `executive` | `multipart/form-data` | Multi-document cross-synthesis |
+| **Document Summarization** | `/summarize-hierarchical` | `POST` | `file`, `chunk_size`, `length`, `format`, `executive` | `multipart/form-data` | Map-Reduce hierarchical long-document summarization |
+| **Analysis & Extraction** | `/key-points` | `POST` | `file`, `number_of_points` | `multipart/form-data` | Salient takeaway extraction (1–20 points) |
+| **Analysis & Extraction** | `/compare` | `POST` | `file_a`, `file_b` | `multipart/form-data` | Side-by-side comparative analysis of two documents |
+| **Analysis & Extraction** | `/update-summary` | `POST` | `previous_summary`, `current_text` | `application/x-www-form-urlencoded` | Delta change detection (new, changed, removed info) |
+| **Media & Video** | `/summarize-media` | `POST` | `file`, `length`, `format`, `executive` | `multipart/form-data` | Audio/video transcription (Whisper) & summarization |
+| **Media & Video** | `/summarize-youtube` | `POST` | `url`, `length`, `format`, `executive` | `application/x-www-form-urlencoded` | Direct YouTube transcript extraction & summarization |
+
+---
+
+### Upload Specifications & Constraints
+
+- **Supported Document Formats**: `.txt` (UTF-8 plain text), `.pdf` (Portable Document Format via PyMuPDF), `.docx` (Microsoft Word via python-docx).
+- **Supported Media Formats**:
+  - **Audio**: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`
+  - **Video**: `.mp4`, `.mkv`, `.mov`, `.webm`, `.avi`
+- **File Upload Limits**:
+  - Maximum upload size: **10 MB** per file.
+  - Enforced server-side using streaming chunk byte validation (`save_uploaded_file`), safely aborting oversized uploads before exhaustion of server memory or storage.
+- **Single-Pass Context Guard**:
+  - Documents uploaded to `/summarize`, `/summarize-multiple`, `/compare`, and `/key-points` are guarded against context overflow (>60,000 characters).
+  - For comprehensive documents (e.g. books, research reports, full transcripts), use the Map-Reduce `/summarize-hierarchical` endpoint.
+- **Temporary File Hygiene**:
+  - Uploaded files reside temporarily in `backend/uploads/` with UUID prefixes and are unlinked in `finally` blocks upon response generation.
+  - Orphaned temporary files older than 1 hour are automatically purged on server boot.
+
+---
+
+### Parameter Options & Defaults
+
+| Parameter | Type | Default | Allowed Values / Range | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `length` | Form (str) | `"medium"` | `short`, `medium`, `long` | Target summary length: short (~1-2 paragraphs), medium (~3-4 paragraphs), long (detailed) |
+| `format` | Form (str) | `"paragraph"` | `paragraph`, `bullets`, `table` | Presentation format: paragraph prose, bullet points, or markdown table |
+| `executive` | Form (bool) | `false` | `true`, `false` | When true, structures output as an executive briefing for leadership |
+| `number_of_points` | Form (int) | `5` | `1` to `20` | Count of salient key takeaways extracted on `/key-points` |
+| `chunk_size` | Form (int) | `2000` | `500` to `20000` | Target character size per partitioned section on `/summarize-hierarchical` |
+
+---
+
+### Practical `curl` Examples
+
+#### 1. System Health Check
+```bash
+curl -i http://127.0.0.1:8000/health
+```
+
+#### 2. Single Document Summarization
+```bash
+curl -X POST "http://127.0.0.1:8000/summarize" \
+  -F "file=@sample.pdf" \
+  -F "length=medium" \
+  -F "format=bullets" \
+  -F "executive=false"
+```
+
+#### 3. Multi-Document Synthesis
+```bash
+curl -X POST "http://127.0.0.1:8000/summarize-multiple" \
+  -F "files=@document_a.txt" \
+  -F "files=@document_b.txt" \
+  -F "length=long" \
+  -F "format=paragraph"
+```
+
+#### 4. Key-Point Extraction
+```bash
+curl -X POST "http://127.0.0.1:8000/key-points" \
+  -F "file=@meeting_notes.docx" \
+  -F "number_of_points=5"
+```
+
+#### 5. Side-by-Side Document Comparison
+```bash
+curl -X POST "http://127.0.0.1:8000/compare" \
+  -F "file_a=@contract_v1.pdf" \
+  -F "file_b=@contract_v2.pdf"
+```
+
+#### 6. Audio / Video Transcription & Summarization
+```bash
+curl -X POST "http://127.0.0.1:8000/summarize-media" \
+  -F "file=@interview.mp3" \
+  -F "length=short" \
+  -F "format=paragraph"
+```
+
+#### 7. Delta Update Summarization
+```bash
+curl -X POST "http://127.0.0.1:8000/update-summary" \
+  -d "previous_summary=Q1 reported 10% revenue growth and launched Product X." \
+  -d "current_text=Q2 reported 15% revenue growth, launched Product Y, and deprecated Product X."
+```
+
+#### 8. Map-Reduce Hierarchical Summarization (Large Documents)
+```bash
+curl -X POST "http://127.0.0.1:8000/summarize-hierarchical" \
+  -F "file=@annual_report.pdf" \
+  -F "chunk_size=2000" \
+  -F "length=medium" \
+  -F "format=paragraph"
+```
+
+#### 9. YouTube Video Summarization
+```bash
+curl -X POST "http://127.0.0.1:8000/summarize-youtube" \
+  -d "url=https://www.youtube.com/watch?v=dQw4w9WgXcQ" \
+  -d "length=medium" \
+  -d "format=paragraph"
+```
+
+---
+
+### HTTP Status Codes & Error Handling
+
+| HTTP Status | Error Type | Cause | Remediation |
+| :---: | :--- | :--- | :--- |
+| `200` | OK | Request succeeded | Process returned JSON payload (`summary`, `key_points`, etc.) |
+| `400` | Bad Request | Unsupported format, 0-byte empty file, text >60k chars, invalid URL, or parameter out of bounds | Verify supported extensions (`.txt`, `.pdf`, `.docx`), ensure file is non-empty, or use `/summarize-hierarchical` for long documents |
+| `413` | Payload Too Large | File exceeds 10 MB limit | Compress or reduce uploaded file size under 10 MB |
+| `422` | Unprocessable Entity | Missing required field or invalid enum literal | Verify parameter names and values (`short`/`medium`/`long`, `paragraph`/`bullets`/`table`) |
+| `500` | Internal Server Error | Upstream Groq API error, Whisper transcription error, or text parsing failure | Verify `GROQ_API_KEY`, ensure FFmpeg is in system `PATH`, check server logs |
 
 ---
 

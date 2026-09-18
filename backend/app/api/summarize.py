@@ -6,7 +6,8 @@ from app.core.config import MAX_FILE_SIZE, UPLOAD_DIR
 from app.schemas.summarize import (
     SummaryResponse,
     KeyPointsResponse,
-    HierarchicalSummaryResponse
+    HierarchicalSummaryResponse,
+    ErrorResponse
 )
 
 from app.services.file_service import extract_text
@@ -42,6 +43,112 @@ ALLOWED_EXTENSIONS = {
     ".pdf",
     ".docx"
 }
+
+
+# ============================================================
+# Standardized OpenAPI Error Responses
+# ============================================================
+
+STANDARD_DOCUMENT_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — Unsupported document extension, empty file, unreadable text, or text exceeding 60,000 chars context limit."
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Payload Too Large — File size exceeds the maximum allowed limit of 10 MB."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required file/form fields or invalid enum selection."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Document extraction failure, file saving error, or upstream Groq LLM API failure."
+    },
+}
+
+KEY_POINTS_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — 'number_of_points' outside allowed range [1, 20], unsupported format, or empty file."
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Payload Too Large — File size exceeds 10 MB limit."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required file or invalid parameter types."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Key points extraction or Groq API failure."
+    },
+}
+
+HIERARCHICAL_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — 'chunk_size' outside allowed range [500, 20000], unsupported format, or empty document."
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Payload Too Large — File size exceeds 10 MB limit."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required file or invalid form parameters."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Map-Reduce section processing or Groq API failure."
+    },
+}
+
+MEDIA_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — Unsupported media extension (must be .mp3, .wav, .m4a, .mp4, .mkv, .mov, .webm, .avi, .flac, .ogg), empty file, or no speech detected."
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Payload Too Large — Media file exceeds 10 MB limit."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required media file or invalid form parameters."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — FFmpeg audio extraction failure, Whisper transcription error, or LLM inference error."
+    },
+}
+
+UPDATE_SUMMARY_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — 'previous_summary' or 'current_text' is empty or whitespace-only."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required form parameters."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Groq LLM update synthesis failure."
+    },
+}
+
+YOUTUBE_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — Empty URL, invalid YouTube video ID, or video lacks accessible closed-captions/transcripts."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required 'url' form field."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Transcript retrieval or Groq LLM synthesis failure."
+    },
+}
+
 
 
 # ============================================================
@@ -159,24 +266,46 @@ def save_uploaded_file(file: UploadFile, max_size: int = MAX_FILE_SIZE) -> str:
 
 @router.post(
     "/summarize",
-    response_model=SummaryResponse
+    response_model=SummaryResponse,
+    summary="Summarize Single Document",
+    description=(
+        "Upload and summarize a single document (**TXT**, **PDF**, or **DOCX**).\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Validation**: Enforces supported extensions (`.txt`, `.pdf`, `.docx`) and max 10 MB file size.\n"
+        "2. **Text Extraction**: Uses PyMuPDF for PDFs, python-docx for DOCX, or direct UTF-8 decoding for TXT.\n"
+        "3. **Synthesis**: Groq Cloud LLM (`openai/gpt-oss-20b`) synthesizes text into the requested length, format, and executive briefing mode.\n\n"
+        "### Supported Document Formats:\n"
+        "- `.txt`: Plain text\n"
+        "- `.pdf`: Portable Document Format (extracts clean text across all pages)\n"
+        "- `.docx`: Microsoft Word document\n\n"
+        "### Constraints:\n"
+        "- Maximum file size: **10 MB** (streaming chunk-enforced)\n"
+        "- Context safety guard: Documents >60,000 characters should use `/summarize-hierarchical`"
+    ),
+    response_description="Synthesized document summary generated by Groq LLM",
+    tags=["Document Summarization"],
+    responses=STANDARD_DOCUMENT_RESPONSES
 )
 def summarize(
-    file: UploadFile = File(...),
+    file: Annotated[
+        UploadFile,
+        File(description="Document file to summarize (.txt, .pdf, or .docx, max 10 MB)")
+    ],
 
-    length: Literal[
-        "short",
-        "medium",
-        "long"
-    ] = Form("medium"),
+    length: Annotated[
+        Literal["short", "medium", "long"],
+        Form(description="Summary length: 'short' (~1-2 paragraphs), 'medium' (~3-4 paragraphs), or 'long' (detailed)")
+    ] = "medium",
 
-    format: Literal[
-        "paragraph",
-        "bullets",
-        "table"
-    ] = Form("paragraph"),
+    format: Annotated[
+        Literal["paragraph", "bullets", "table"],
+        Form(description="Output presentation format: 'paragraph' (narrative), 'bullets' (bullet points), or 'table' (markdown table)")
+    ] = "paragraph",
 
-    executive: bool = Form(False)
+    executive: Annotated[
+        bool,
+        Form(description="When true, generates a high-level strategic executive summary tailored for leadership")
+    ] = False
 ):
 
     # --------------------------------------------------------
@@ -259,24 +388,43 @@ def summarize(
 
 @router.post(
     "/summarize-multiple",
-    response_model=SummaryResponse
+    response_model=SummaryResponse,
+    summary="Synthesize Multiple Documents",
+    description=(
+        "Upload and synthesize multiple documents (**TXT**, **PDF**, or **DOCX**) into a consolidated overview.\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Batch Validation**: Validates each document's extension and enforces the 10 MB limit per file.\n"
+        "2. **Text Extraction & Separation**: Extracts text from each document and labels document boundaries with contextual delimiters.\n"
+        "3. **Cross-Synthesis**: Groq Cloud LLM synthesizes common themes and key insights across all documents.\n\n"
+        "### Constraints:\n"
+        "- Accepts multiple files in the `files` field (`.txt`, `.pdf`, `.docx`)\n"
+        "- Maximum file size: **10 MB per file**\n"
+        "- Total combined text must not exceed 60,000 characters"
+    ),
+    response_description="Consolidated multi-document summary generated by Groq LLM",
+    tags=["Document Summarization"],
+    responses=STANDARD_DOCUMENT_RESPONSES
 )
 def summarize_multiple(
-    files: list[UploadFile] = File(...),
+    files: Annotated[
+        list[UploadFile],
+        File(description="Array of document files to synthesize (.txt, .pdf, or .docx, max 10 MB each)")
+    ],
 
-    length: Literal[
-        "short",
-        "medium",
-        "long"
-    ] = Form("medium"),
+    length: Annotated[
+        Literal["short", "medium", "long"],
+        Form(description="Summary length: 'short', 'medium', or 'long'")
+    ] = "medium",
 
-    format: Literal[
-        "paragraph",
-        "bullets",
-        "table"
-    ] = Form("paragraph"),
+    format: Annotated[
+        Literal["paragraph", "bullets", "table"],
+        Form(description="Output presentation format: 'paragraph', 'bullets', or 'table'")
+    ] = "paragraph",
 
-    executive: bool = Form(False)
+    executive: Annotated[
+        bool,
+        Form(description="When true, generates a strategic executive summary tailored for leadership")
+    ] = False
 ):
 
     # --------------------------------------------------------
@@ -405,11 +553,31 @@ def summarize_multiple(
 
 @router.post(
     "/key-points",
-    response_model=KeyPointsResponse
+    response_model=KeyPointsResponse,
+    summary="Extract Key Takeaways",
+    description=(
+        "Extract a configurable number of crisp, salient key takeaways from an uploaded document.\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Text Extraction**: Extracts clean text from `.txt`, `.pdf`, or `.docx`.\n"
+        "2. **Salience Extraction**: Groq LLM identifies the most critical concepts, facts, or decisions.\n"
+        "3. **Normalization**: Strips list numbering into a clean JSON array of strings.\n\n"
+        "### Parameters:\n"
+        "- `number_of_points`: Integer count between **1** and **20** (default: 5)\n"
+        "- Maximum file size: **10 MB**"
+    ),
+    response_description="Structured list of extracted key takeaways",
+    tags=["Analysis & Extraction"],
+    responses=KEY_POINTS_RESPONSES
 )
 def key_points(
-    file: UploadFile = File(...),
-    number_of_points: int = Form(5)
+    file: Annotated[
+        UploadFile,
+        File(description="Document file to extract key takeaways from (.txt, .pdf, or .docx, max 10 MB)")
+    ],
+    number_of_points: Annotated[
+        int,
+        Form(description="Number of key points to extract (between 1 and 20)")
+    ] = 5
 ):
 
     # --------------------------------------------------------
@@ -556,15 +724,33 @@ def key_points(
 
 @router.post(
     "/compare",
-    response_model=SummaryResponse
+    response_model=SummaryResponse,
+    summary="Side-by-Side Document Comparison",
+    description=(
+        "Perform a comparative analysis of two uploaded documents (`file_a` and `file_b`).\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Independent Ingestion**: Validates and extracts text from each document.\n"
+        "2. **Comparative Synthesis**: Groq LLM evaluates both texts side-by-side to highlight:\n"
+        "   - **Common Themes & Similarities**: Shared arguments, mutual findings, and baseline overlap.\n"
+        "   - **Key Differences**: Divergent conclusions, conflicting metrics, and contrasting stances.\n"
+        "   - **Unique Details**: Facts or data points present in only one document.\n\n"
+        "### Supported Formats:\n"
+        "- Both `file_a` and `file_b` accept `.txt`, `.pdf`, and `.docx` up to 10 MB each."
+    ),
+    response_description="Structured comparative analysis report highlighting commonalities and differences",
+    tags=["Analysis & Extraction"],
+    responses=STANDARD_DOCUMENT_RESPONSES
 )
 def compare(
-    file_a: UploadFile = File(...),
-    file_b: UploadFile = File(...)
+    file_a: Annotated[
+        UploadFile,
+        File(description="First document to compare (.txt, .pdf, or .docx, max 10 MB)")
+    ],
+    file_b: Annotated[
+        UploadFile,
+        File(description="Second document to compare (.txt, .pdf, or .docx, max 10 MB)")
+    ]
 ):
-    """
-    Compare two uploaded documents.
-    """
 
     file_a_path = None
     file_b_path = None
@@ -684,48 +870,47 @@ def compare(
 
 @router.post(
     "/summarize-media",
-    response_model=SummaryResponse
+    response_model=SummaryResponse,
+    summary="Transcribe & Summarize Audio/Video",
+    description=(
+        "Upload an audio or video file to extract audio via FFmpeg, transcribe speech locally using faster-whisper, and generate a structured summary using Groq LLM.\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Validation**: Verifies that the file extension is supported and under 10 MB.\n"
+        "2. **FFmpeg Audio Extraction**: Normalizes media stream to 16 kHz mono 16-bit PCM WAV (with OS code-integrity fallback).\n"
+        "3. **Local Whisper Transcription**: Transcribes speech offline using `faster-whisper` INT8 quantized model.\n"
+        "4. **LLM Synthesis**: Groq Cloud LLM (`openai/gpt-oss-20b`) synthesizes the transcript into the requested length and format.\n\n"
+        "### Supported Media Formats:\n"
+        "- **Audio**: `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`\n"
+        "- **Video**: `.mp4`, `.mkv`, `.mov`, `.webm`, `.avi`\n\n"
+        "### Constraints:\n"
+        "- Maximum file size: **10 MB**\n"
+        "- Speech must be present and audible in the recording."
+    ),
+    response_description="Synthesized summary of spoken audio/video content",
+    tags=["Media & Video"],
+    responses=MEDIA_RESPONSES
 )
 def summarize_media(
     file: Annotated[
         UploadFile,
-        File(description="Audio or video file to summarize")
+        File(description="Audio or video file (.mp3, .wav, .m4a, .mp4, .mkv, .mov, .webm, .avi, .flac, .ogg, max 10 MB)")
     ],
 
     length: Annotated[
         Literal["short", "medium", "long"],
-        Form()
+        Form(description="Summary length: 'short', 'medium', or 'long'")
     ] = "medium",
 
     format: Annotated[
         Literal["paragraph", "bullets", "table"],
-        Form()
+        Form(description="Output presentation format: 'paragraph', 'bullets', or 'table'")
     ] = "paragraph",
 
     executive: Annotated[
         bool,
-        Form()
+        Form(description="When true, generates a strategic executive briefing")
     ] = False
 ):
-    """
-    Summarize an uploaded audio or video file.
-
-    Processing pipeline:
-
-        Audio / Video
-             ↓
-           FFmpeg
-             ↓
-       Audio extraction
-             ↓
-       faster-whisper
-             ↓
-         Transcript
-             ↓
-           Groq
-             ↓
-          Summary
-    """
 
     media_path = None
 
@@ -817,23 +1002,33 @@ def summarize_media(
 
 @router.post(
     "/update-summary",
-    response_model=SummaryResponse
+    response_model=SummaryResponse,
+    summary="Delta Update Summarization",
+    description=(
+        "Compare an existing document summary against the latest document content and isolate delta updates.\n\n"
+        "### Processing Pipeline:\n"
+        "1. Ingests `previous_summary` and updated `current_text`.\n"
+        "2. Groq Cloud LLM detects and structures updates into four distinct categories:\n"
+        "   - **New Information**: Newly introduced facts, findings, and statements.\n"
+        "   - **Changed Information**: Contradictions, updated data points, and changed timelines.\n"
+        "   - **Removed Information**: Concepts in the previous summary that no longer appear.\n"
+        "   - **Unchanged Information**: Key aspects that remain consistent."
+    ),
+    response_description="Categorized delta summary highlighting additions, modifications, and removals",
+    tags=["Analysis & Extraction"],
+    responses=UPDATE_SUMMARY_RESPONSES
 )
 def update_summary_endpoint(
     previous_summary: Annotated[
         str,
-        Form(description="Previous summary")
+        Form(description="Existing summary text to compare against", examples=["Company Q1 reported 10% growth in revenue and launched Product X."])
     ],
 
     current_text: Annotated[
         str,
-        Form(description="Current document text")
+        Form(description="Current updated document content", examples=["Company Q2 reported 15% growth in revenue, launched Product Y, and deprecated Product X."])
     ]
 ):
-    """
-    Compare a previous summary with the current document
-    and identify meaningful updates.
-    """
 
     try:
 
@@ -897,39 +1092,51 @@ def update_summary_endpoint(
 
 @router.post(
     "/summarize-hierarchical",
-    response_model=HierarchicalSummaryResponse
+    response_model=HierarchicalSummaryResponse,
+    summary="Map-Reduce Hierarchical Summarization",
+    description=(
+        "Summarize large documents using a high-throughput parallelized Map-Reduce architecture.\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Semantic Partitioning (Map)**: Splits document text along heading, chapter, and paragraph boundaries into target chunks (500–20,000 characters).\n"
+        "2. **Parallel Section Synthesis**: Dispatches chunk summarization concurrently across worker threads (`ThreadPoolExecutor(max_workers=4)`).\n"
+        "3. **Master Synthesis (Reduce)**: Aggregates individual section summaries into a cohesive, structured final master summary.\n\n"
+        "### Returns:\n"
+        "- `final_summary`: Comprehensive synthesis covering all sections.\n"
+        "- `section_summaries`: Array of individual section indexes and summaries.\n"
+        "- `total_sections`: Total number of partitioned chunks processed.\n\n"
+        "### Supported Formats:\n"
+        "- Document files: `.txt`, `.pdf`, `.docx` up to 10 MB."
+    ),
+    response_description="Master synthesized summary and individual section breakdown",
+    tags=["Document Summarization"],
+    responses=HIERARCHICAL_RESPONSES
 )
 def summarize_hierarchical_endpoint(
-    file: UploadFile = File(
-        ...,
-        description="Document file (TXT, PDF, DOCX) to summarize hierarchically"
-    ),
+    file: Annotated[
+        UploadFile,
+        File(description="Document file (TXT, PDF, DOCX) to summarize hierarchically (max 10 MB)")
+    ],
 
-    length: Literal[
-        "short",
-        "medium",
-        "long"
-    ] = Form("medium"),
+    length: Annotated[
+        Literal["short", "medium", "long"],
+        Form(description="Summary length: 'short', 'medium', or 'long'")
+    ] = "medium",
 
-    format: Literal[
-        "paragraph",
-        "bullets",
-        "table"
-    ] = Form("paragraph"),
+    format: Annotated[
+        Literal["paragraph", "bullets", "table"],
+        Form(description="Output presentation format: 'paragraph', 'bullets', or 'table'")
+    ] = "paragraph",
 
-    executive: bool = Form(False),
+    executive: Annotated[
+        bool,
+        Form(description="When true, generates an executive-level strategic overview")
+    ] = False,
 
-    chunk_size: int = Form(
-        2000,
-        description="Target character size per section chunk (500-20000)"
-    )
+    chunk_size: Annotated[
+        int,
+        Form(description="Target character size per section chunk (between 500 and 20000 characters)")
+    ] = 2000
 ):
-    """
-    Hierarchically summarize a document using a Map-Reduce architecture:
-    - Splits text into coherent sections/chunks.
-    - Summarizes each chunk individually (Map).
-    - Synthesizes section summaries into a final cohesive summary (Reduce).
-    """
 
     # --------------------------------------------------------
     # Validate uploaded file
@@ -992,31 +1199,49 @@ def summarize_hierarchical_endpoint(
 
 @router.post(
     "/summarize-youtube",
-    response_model=SummaryResponse
+    response_model=SummaryResponse,
+    summary="Summarize YouTube Video Transcript",
+    description=(
+        "Extract closed captions and transcripts from a YouTube video URL and generate a structured summary.\n\n"
+        "### Supported YouTube URL Formats:\n"
+        "- Standard Watch: `https://www.youtube.com/watch?v=VIDEO_ID`\n"
+        "- Shortened Share: `https://youtu.be/VIDEO_ID`\n"
+        "- Embedded Link: `https://www.youtube.com/embed/VIDEO_ID`\n"
+        "- YouTube Shorts: `https://www.youtube.com/shorts/VIDEO_ID`\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Video ID Extraction**: Extracts the 11-character video ID using regex pattern matching.\n"
+        "2. **Captions Retrieval**: Queries YouTube's caption endpoint via `youtube-transcript-api`.\n"
+        "3. **Cleaning**: Strips sound markers (e.g. `[Music]`, `[Applause]`) and aggregates text.\n"
+        "4. **Synthesis**: Groq Cloud LLM generates a cohesive summary in the requested length and format."
+    ),
+    response_description="Synthesized summary generated from YouTube video transcript",
+    tags=["Media & Video"],
+    responses=YOUTUBE_RESPONSES
 )
 def summarize_youtube_endpoint(
     url: Annotated[
         str,
-        Form(description="YouTube video URL (e.g. https://www.youtube.com/watch?v=...)")
+        Form(
+            description="YouTube video URL (e.g. https://www.youtube.com/watch?v=...)",
+            examples=["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+        )
     ],
 
-    length: Literal[
-        "short",
-        "medium",
-        "long"
-    ] = Form("medium"),
+    length: Annotated[
+        Literal["short", "medium", "long"],
+        Form(description="Summary length: 'short', 'medium', or 'long'")
+    ] = "medium",
 
-    format: Literal[
-        "paragraph",
-        "bullets",
-        "table"
-    ] = Form("paragraph"),
+    format: Annotated[
+        Literal["paragraph", "bullets", "table"],
+        Form(description="Output presentation format: 'paragraph', 'bullets', or 'table'")
+    ] = "paragraph",
 
-    executive: bool = Form(False)
+    executive: Annotated[
+        bool,
+        Form(description="When true, generates a strategic executive briefing")
+    ] = False
 ):
-    """
-    Summarize a YouTube video directly from its closed-caption / transcript text.
-    """
     if not url or not url.strip():
         raise HTTPException(
             status_code=400,
