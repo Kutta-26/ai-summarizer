@@ -5,7 +5,6 @@ import sys
 import types
 import time
 
-from fastapi import HTTPException, UploadFile
 from app.core.config import WHISPER_MODEL_SIZE
 from app.core.logging_config import get_logger
 

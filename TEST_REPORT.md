@@ -74,10 +74,15 @@ Frontend static assets compiled via Vite 5 (`npm run build`):
 | 9 | Update / delta summaries | **VERIFIED** | Change-detection comparing baseline vs updated text |
 | 10 | Hierarchical / Map-Reduce summarization | **VERIFIED** | Concurrent ThreadPoolExecutor Map-Reduce engine |
 | 11 | LLM API integration | **VERIFIED** | Groq Cloud LPU with connection pooling & system SSL |
-| 12 | YouTube transcript summarization | **VERIFIED** | Regex video ID parser + YouTube caption extractor |
+| 12 | YouTube transcript summarization | **IMPLEMENTED (Live Test Pending)** | URL validation & regex parser verified in test suite; live transcript extraction pending testing on an unrestricted network (failed on college SSL-intercepted network) |
 | 13 | Podcast / audio support | **VERIFIED** | MP3, WAV, M4A, OGG speech-to-text pipeline |
 | 14 | Negative & boundary safety | **VERIFIED** | 10 boundary tests covering empty/large/bad formats |
 | 15 | Observability & Latency Monitoring | **VERIFIED** | `X-Process-Time` header + structured stage logging |
+
+> [!NOTE]
+> **Important Testing Distinctions**:
+> - **YouTube Live Caption Fetching**: The URL parser, error responses, and endpoint integration are fully implemented and verified via automated tests. However, live end-to-end extraction against YouTube's servers failed on an institutional/college network due to SSL inspection and firewall certificate re-signing. Full live verification must be performed on an unrestricted consumer/hotspot internet connection.
+> - **Docker Container Runtime**: `backend/Dockerfile`, `frontend/Dockerfile`, and `docker-compose.yml` configurations have been audited and verified for syntax and structure. Container runtime execution (`docker compose up`) has not yet been executed on the host machine and is marked pending local daemon verification.
 
 ---
 
