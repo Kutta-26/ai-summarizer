@@ -11,6 +11,7 @@ sys.path.insert(0, str(backend_dir))
 from main import app
 from app.services.file_service import extract_text, extract_pdf, extract_docx
 from app.services.importance_service import score_importance
+from app.services.redundancy_service import detect_and_filter_redundancy, check_pairwise_redundancy
 
 client = TestClient(app)
 root_dir = Path(__file__).resolve().parent.parent
@@ -152,6 +153,41 @@ def run_tests():
         log_result("Importance Scoring (Hybrid Heuristic & Signals)", is_ok, f"Score: {imp_res['score']:.2f}, Signals: {sum(imp_res['signals'].values())} active")
     except Exception as e:
         log_result("Importance Scoring (Hybrid Heuristic & Signals)", False, str(e))
+
+    # ============================================================
+    # 2.2 Redundancy Detection & Removal Unit Test
+    # ============================================================
+    try:
+        sec1 = {
+            "section_index": 1,
+            "summary": "Revenue increased.",
+            "importance_score": 0.30,
+            "importance_signals": {"key_findings": False, "decisions": False, "metrics": False, "actions": False, "risks": False, "conclusion": False}
+        }
+        sec2 = {
+            "section_index": 2,
+            "summary": "Revenue increased 25% year-over-year to $4.2 million.",
+            "importance_score": 0.88,
+            "importance_signals": {"key_findings": True, "decisions": False, "metrics": True, "actions": False, "risks": False, "conclusion": False}
+        }
+        sec3 = {
+            "section_index": 3,
+            "summary": "Engineering team deployed the multi-region Kubernetes cluster.",
+            "importance_score": 0.75,
+            "importance_signals": {"key_findings": False, "decisions": True, "metrics": False, "actions": True, "risks": False, "conclusion": False}
+        }
+        processed, records = detect_and_filter_redundancy([sec1, sec2, sec3], threshold=0.80)
+        is_ok = (
+            len(records) == 1 and
+            records[0]["kept_section"] == 2 and
+            records[0]["removed_section"] == 1 and
+            processed[0]["is_redundant"] is True and
+            processed[1]["is_redundant"] is False and
+            processed[2]["is_redundant"] is False
+        )
+        log_result("Redundancy Detection (Layered Near-Duplicate & Quality Selection)", is_ok, f"{len(records)} redundancy event detected, kept Section 2 over Section 1")
+    except Exception as e:
+        log_result("Redundancy Detection (Layered Near-Duplicate & Quality Selection)", False, str(e))
 
     # ============================================================
     # 3. Input Validation, Bounds & Security Tests
@@ -487,8 +523,12 @@ def run_tests():
             all("importance_score" in s and s["importance_score"] is not None for s in sections) and
             all("importance_signals" in s and s["importance_signals"] is not None for s in sections)
         )
-        is_ok = res.status_code == 200 and "final_summary" in data and "section_summaries" in data and has_importance
-        log_result(f"POST /summarize-hierarchical (Concurrent Map-Reduce & Importance {mode_label})", is_ok, f"Status {res.status_code}, {data.get('total_sections', 0)} section(s) with importance scoring")
+        has_redundancy_meta = (
+            "redundant_sections_count" in data and
+            all("is_redundant" in s for s in sections)
+        )
+        is_ok = res.status_code == 200 and "final_summary" in data and "section_summaries" in data and has_importance and has_redundancy_meta
+        log_result(f"POST /summarize-hierarchical (Map-Reduce with Importance & Redundancy {mode_label})", is_ok, f"Status {res.status_code}, {data.get('total_sections', 0)} section(s), {data.get('redundant_sections_count', 0)} redundant")
         if not is_ci_mode:
             time.sleep(0.5)
     except Exception as e:

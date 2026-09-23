@@ -102,6 +102,16 @@ class SectionSummary(BaseModel):
         description="Detected informational signals in this section",
         examples=[{"key_findings": True, "decisions": False, "metrics": True, "actions": True, "risks": False, "conclusion": True}]
     )
+    is_redundant: Optional[bool] = Field(
+        default=False,
+        description="Whether this section was flagged as redundant with another section",
+        examples=[False]
+    )
+    redundancy_info: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Details regarding redundancy type, similarity score, and which section was retained",
+        examples=[{"is_redundant": True, "redundancy_type": "near_duplicate", "similarity": 0.91, "kept_section": 1, "removed_section": 2, "reason": "Section 2 repeats Section 1."}]
+    )
 
 
 class HierarchicalSummaryResponse(BaseModel):
@@ -119,4 +129,9 @@ class HierarchicalSummaryResponse(BaseModel):
         ...,
         description="Total number of chunks partitioned and summarized",
         examples=[3]
+    )
+    redundant_sections_count: Optional[int] = Field(
+        default=0,
+        description="Number of redundant sections identified and suppressed from final synthesis",
+        examples=[1]
     )

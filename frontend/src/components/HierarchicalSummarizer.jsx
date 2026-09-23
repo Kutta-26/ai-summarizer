@@ -208,7 +208,7 @@ export default function HierarchicalSummarizer({ onError }) {
           <SummaryResult
             summary={hierarchicalResult.final_summary}
             title={`Hierarchical Summary of ${file ? file.name : 'Document'}`}
-            metaInfo={`MAP-REDUCE • ${hierarchicalResult.total_sections} SECTIONS SYNTHESIZED • ${length.toUpperCase()} • ${format.toUpperCase()}`}
+            metaInfo={`MAP-REDUCE • ${hierarchicalResult.total_sections} SECTIONS${hierarchicalResult.redundant_sections_count > 0 ? ` (${hierarchicalResult.redundant_sections_count} REDUNDANT REMOVED)` : ''} • ${length.toUpperCase()} • ${format.toUpperCase()}`}
           />
 
           {/* Section Breakdown Accordion / Toggle */}
@@ -244,15 +244,30 @@ export default function HierarchicalSummarizer({ onError }) {
                       key={sec.section_index}
                       style={{
                         padding: '1rem',
-                        backgroundColor: 'var(--bg-surface-elevated, #1a2234)',
+                        backgroundColor: sec.is_redundant ? 'rgba(234, 179, 8, 0.04)' : 'var(--bg-surface-elevated, #1a2234)',
                         borderRadius: 'var(--radius-md)',
-                        border: '1px solid var(--border-color)',
+                        border: sec.is_redundant ? '1px dashed rgba(234, 179, 8, 0.35)' : '1px solid var(--border-color)',
+                        opacity: sec.is_redundant ? 0.85 : 1.0,
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                        <strong style={{ color: 'var(--accent-blue)', margin: 0 }}>
-                          Section #{sec.section_index}
-                        </strong>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <strong style={{ color: sec.is_redundant ? '#facc15' : 'var(--accent-blue)', margin: 0 }}>
+                            Section #{sec.section_index}
+                          </strong>
+                          {sec.is_redundant && (
+                            <span style={{
+                              fontSize: '0.72rem',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              backgroundColor: 'rgba(234, 179, 8, 0.2)',
+                              color: '#facc15',
+                              fontWeight: 600
+                            }}>
+                              Redundant ({sec.redundancy_info?.redundancy_type === 'exact_duplicate' ? 'Exact Match' : `${Math.round((sec.redundancy_info?.similarity || 0.85) * 100)}% Match`})
+                            </span>
+                          )}
+                        </div>
                         {sec.importance_score !== undefined && sec.importance_score !== null && (
                           <span style={{
                             fontSize: '0.75rem',
@@ -269,7 +284,12 @@ export default function HierarchicalSummarizer({ onError }) {
                       <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: '1.5', color: 'var(--text-secondary)' }}>
                         {sec.summary}
                       </p>
-                      {sec.importance_reason && (
+                      {sec.is_redundant && sec.redundancy_info?.reason && (
+                        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#facc15', fontStyle: 'italic' }}>
+                          Filtered from synthesis: {sec.redundancy_info.reason}
+                        </div>
+                      )}
+                      {sec.importance_reason && !sec.is_redundant && (
                         <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted, #94a3b8)', fontStyle: 'italic' }}>
                           {sec.importance_reason}
                         </div>

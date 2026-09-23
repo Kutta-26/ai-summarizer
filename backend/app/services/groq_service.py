@@ -24,6 +24,10 @@ import ssl
 import httpx
 from app.core.logging_config import get_logger
 from app.services.importance_service import score_importance
+from app.services.redundancy_service import (
+    detect_and_filter_redundancy,
+    filter_synthesis_sections
+)
 
 logger = get_logger("groq")
 
@@ -1048,10 +1052,13 @@ def hierarchical_summarize(
                     "summary": final_summary,
                     "importance_score": importance["score"],
                     "importance_reason": importance["reason"],
-                    "importance_signals": importance["signals"]
+                    "importance_signals": importance["signals"],
+                    "is_redundant": False,
+                    "redundancy_info": None
                 }
             ],
-            "total_sections": 1
+            "total_sections": 1,
+            "redundant_sections_count": 0
         }
 
     # --------------------------------------------------------
@@ -1096,16 +1103,33 @@ def hierarchical_summarize(
 
 
     # --------------------------------------------------------
+    # Redundancy Detection Step: Detect and mark redundant sections
+    # --------------------------------------------------------
+    section_summaries, redundancy_records = detect_and_filter_redundancy(
+        section_summaries=section_summaries,
+        threshold=0.80,
+        use_llm=False
+    )
+    redundant_count = len(redundancy_records)
+    if redundant_count > 0:
+        logger.info(
+            f"Redundancy detection: {redundant_count} redundant section(s) identified and suppressed from final synthesis"
+        )
+
+    # Extract non-redundant sections for intermediate & final synthesis
+    synthesis_sections = filter_synthesis_sections(section_summaries)
+
+    # --------------------------------------------------------
     # Multi-Tier Consolidation for Large Documents (if > 6 sections)
     # --------------------------------------------------------
     intermediate_to_synthesize = ""
 
-    if len(section_summaries) > 6:
+    if len(synthesis_sections) > 6:
         # Group into batches of 3-4 sections to avoid massive single prompt
         batch_size = 4
         batches = [
-            section_summaries[i:i + batch_size]
-            for i in range(0, len(section_summaries), batch_size)
+            synthesis_sections[i:i + batch_size]
+            for i in range(0, len(synthesis_sections), batch_size)
         ]
         tier2_summaries = []
         for b_idx, batch in enumerate(batches, start=1):
@@ -1120,9 +1144,9 @@ def hierarchical_summarize(
             )
         intermediate_to_synthesize = "\n\n".join(tier2_summaries)
     else:
-        # Direct combination of section summaries
+        # Direct combination of non-redundant section summaries
         combined = []
-        for sec in section_summaries:
+        for sec in synthesis_sections:
             imp_tag = f" [Importance: {sec.get('importance_score', 'N/A')}]" if sec.get('importance_score') is not None else ""
             combined.append(
                 f"--- SECTION {sec['section_index']}{imp_tag} SUMMARY ---\n"
@@ -1200,5 +1224,6 @@ INTERMEDIATE SECTION SUMMARIES:
     return {
         "final_summary": final_summary,
         "section_summaries": section_summaries,
-        "total_sections": len(section_summaries)
+        "total_sections": len(section_summaries),
+        "redundant_sections_count": redundant_count
     }
