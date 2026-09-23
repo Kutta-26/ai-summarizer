@@ -67,3 +67,5 @@ huggingface/
 *.swo
 Thumbs.db
 .DS_Store
+# Local machine/network CA certificates
+docker/certs/

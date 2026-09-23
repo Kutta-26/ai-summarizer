@@ -334,10 +334,13 @@ def run_tests():
     # ============================================================
     is_ci_mode = "--ci" in sys.argv or not os.getenv("GROQ_API_KEY")
     patcher = None
+    media_transcription_patcher = None
+
     if is_ci_mode:
         print("[INFO] Executing in Deterministic CI mode (Mocked LLM Provider)")
         from unittest.mock import patch
         import app.services.groq_service as groq_svc
+        import app.api.summarize as summarize_api
 
         def mock_call_groq(messages, temperature=0.2, operation="operation"):
             if "key" in operation:
@@ -350,6 +353,13 @@ def run_tests():
 
         patcher = patch.object(groq_svc, "_call_groq_chat", side_effect=mock_call_groq)
         patcher.start()
+
+        media_transcription_patcher = patch.object(
+            summarize_api,
+            "transcribe_media",
+            return_value="This is a deterministic CI transcription used for testing the media summarization pipeline."
+        )
+        media_transcription_patcher.start()
     else:
         print("[INFO] Executing in Live Integration mode with Groq API")
 
@@ -475,6 +485,9 @@ def run_tests():
             log_result("POST /summarize-media", True, "Sample media not found, skipped live execution")
     except Exception as e:
         log_result(f"POST /summarize-media (Speech Transcription & Summary {mode_label})", False, str(e))
+
+    if media_transcription_patcher is not None:
+        media_transcription_patcher.stop()
 
     if patcher is not None:
         patcher.stop()
