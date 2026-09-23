@@ -10,6 +10,7 @@ sys.path.insert(0, str(backend_dir))
 
 from main import app
 from app.services.file_service import extract_text, extract_pdf, extract_docx
+from app.services.importance_service import score_importance
 
 client = TestClient(app)
 root_dir = Path(__file__).resolve().parent.parent
@@ -131,6 +132,26 @@ def run_tests():
             log_result("Text Extraction (DOCX python-docx)", True, "No sample DOCX present, skipped")
     except Exception as e:
         log_result("Text Extraction (DOCX python-docx)", False, str(e))
+
+    # ============================================================
+    # 2.1 Importance Scoring Engine Unit Test
+    # ============================================================
+    try:
+        sample_imp_text = """
+        # Section 2: Performance Evaluation & Decision
+        The key findings demonstrate that throughput increased by 35% (up to 12,000 req/sec).
+        The architecture review board decided to approve the distributed deployment plan.
+        Identified risks include potential cache stampedes during node failover.
+        Next steps: operations team must implement distributed locking prior to production launch.
+        """
+        imp_res = score_importance(sample_imp_text, chunk_index=1, total_chunks=2)
+        score_bounded = (0.0 <= imp_res["score"] <= 1.0)
+        has_signals = all(k in imp_res["signals"] for k in ["key_findings", "decisions", "metrics", "actions", "risks", "conclusion"])
+        high_score = imp_res["score"] >= 0.70
+        is_ok = score_bounded and has_signals and high_score and bool(imp_res["reason"])
+        log_result("Importance Scoring (Hybrid Heuristic & Signals)", is_ok, f"Score: {imp_res['score']:.2f}, Signals: {sum(imp_res['signals'].values())} active")
+    except Exception as e:
+        log_result("Importance Scoring (Hybrid Heuristic & Signals)", False, str(e))
 
     # ============================================================
     # 3. Input Validation, Bounds & Security Tests
@@ -460,8 +481,14 @@ def run_tests():
                 data={"length": "medium", "format": "paragraph", "chunk_size": 2000}
             )
         data = res.json()
-        is_ok = res.status_code == 200 and "final_summary" in data and "section_summaries" in data
-        log_result(f"POST /summarize-hierarchical (Concurrent Map-Reduce {mode_label})", is_ok, f"Status {res.status_code}, {data.get('total_sections', 0)} section(s)")
+        sections = data.get("section_summaries", [])
+        has_importance = (
+            len(sections) > 0 and
+            all("importance_score" in s and s["importance_score"] is not None for s in sections) and
+            all("importance_signals" in s and s["importance_signals"] is not None for s in sections)
+        )
+        is_ok = res.status_code == 200 and "final_summary" in data and "section_summaries" in data and has_importance
+        log_result(f"POST /summarize-hierarchical (Concurrent Map-Reduce & Importance {mode_label})", is_ok, f"Status {res.status_code}, {data.get('total_sections', 0)} section(s) with importance scoring")
         if not is_ci_mode:
             time.sleep(0.5)
     except Exception as e:

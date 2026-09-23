@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Union, List, Dict, Any
+from typing import Literal, Union, List, Dict, Any, Optional
 
 
 class MessageResponse(BaseModel):
@@ -86,6 +86,21 @@ class SectionSummary(BaseModel):
         ...,
         description="Concise synthesis of this specific section",
         examples=["Section 1 introduces the system requirements and hardware specifications."]
+    )
+    importance_score: Optional[float] = Field(
+        default=None,
+        description="Hybrid importance score between 0.0 and 1.0",
+        examples=[0.87]
+    )
+    importance_reason: Optional[str] = Field(
+        default=None,
+        description="Reasoning explaining the importance assessment",
+        examples=["High importance: contains key findings, numerical metrics, and decisions."]
+    )
+    importance_signals: Optional[Dict[str, bool]] = Field(
+        default=None,
+        description="Detected informational signals in this section",
+        examples=[{"key_findings": True, "decisions": False, "metrics": True, "actions": True, "risks": False, "conclusion": True}]
     )
 
 

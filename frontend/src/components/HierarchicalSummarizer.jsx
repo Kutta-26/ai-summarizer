@@ -249,12 +249,31 @@ export default function HierarchicalSummarizer({ onError }) {
                         border: '1px solid var(--border-color)',
                       }}
                     >
-                      <strong style={{ color: 'var(--accent-blue)', display: 'block', marginBottom: '0.5rem' }}>
-                        Section #{sec.section_index}
-                      </strong>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <strong style={{ color: 'var(--accent-blue)', margin: 0 }}>
+                          Section #{sec.section_index}
+                        </strong>
+                        {sec.importance_score !== undefined && sec.importance_score !== null && (
+                          <span style={{
+                            fontSize: '0.75rem',
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            backgroundColor: sec.importance_score >= 0.7 ? 'rgba(34, 197, 94, 0.2)' : sec.importance_score >= 0.4 ? 'rgba(234, 179, 8, 0.2)' : 'rgba(148, 163, 184, 0.2)',
+                            color: sec.importance_score >= 0.7 ? '#4ade80' : sec.importance_score >= 0.4 ? '#facc15' : '#94a3b8',
+                            fontWeight: 600
+                          }}>
+                            Importance: {Math.round(sec.importance_score * 100)}%
+                          </span>
+                        )}
+                      </div>
                       <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: '1.5', color: 'var(--text-secondary)' }}>
                         {sec.summary}
                       </p>
+                      {sec.importance_reason && (
+                        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted, #94a3b8)', fontStyle: 'italic' }}>
+                          {sec.importance_reason}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

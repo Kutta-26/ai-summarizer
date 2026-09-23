@@ -23,6 +23,7 @@ from app.core.config import (
 import ssl
 import httpx
 from app.core.logging_config import get_logger
+from app.services.importance_service import score_importance
 
 logger = get_logger("groq")
 
@@ -1038,12 +1039,16 @@ def hierarchical_summarize(
             format=format,
             executive=executive
         )
+        importance = score_importance(text=chunks[0], chunk_index=1, total_chunks=1)
         return {
             "final_summary": final_summary,
             "section_summaries": [
                 {
                     "section_index": 1,
-                    "summary": final_summary
+                    "summary": final_summary,
+                    "importance_score": importance["score"],
+                    "importance_reason": importance["reason"],
+                    "importance_signals": importance["signals"]
                 }
             ],
             "total_sections": 1
@@ -1056,13 +1061,21 @@ def hierarchical_summarize(
     section_summaries = [None] * total_chunks
 
     def _process_chunk(chunk_idx, chunk_text):
+        importance = score_importance(
+            text=chunk_text,
+            chunk_index=chunk_idx,
+            total_chunks=total_chunks
+        )
         return {
             "section_index": chunk_idx,
             "summary": summarize_chunk(
                 chunk=chunk_text,
                 chunk_index=chunk_idx,
                 total_chunks=total_chunks
-            )
+            ),
+            "importance_score": importance["score"],
+            "importance_reason": importance["reason"],
+            "importance_signals": importance["signals"]
         }
 
     max_workers = min(4, total_chunks)
@@ -1110,8 +1123,9 @@ def hierarchical_summarize(
         # Direct combination of section summaries
         combined = []
         for sec in section_summaries:
+            imp_tag = f" [Importance: {sec.get('importance_score', 'N/A')}]" if sec.get('importance_score') is not None else ""
             combined.append(
-                f"--- SECTION {sec['section_index']} SUMMARY ---\n"
+                f"--- SECTION {sec['section_index']}{imp_tag} SUMMARY ---\n"
                 f"{sec['summary']}"
             )
         intermediate_to_synthesize = "\n\n".join(combined)
