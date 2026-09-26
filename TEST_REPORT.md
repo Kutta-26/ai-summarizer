@@ -14,18 +14,22 @@
 
 ## 2. Automated Test Execution Matrix
 
-### Overall Result: 32/32 Automated Tests Passing — 100% Success Rate
+### Overall Result: 39/39 Automated Regression Tests Passing — 100% Success Rate
+*(Plus 17/17 dedicated faithfulness unit tests, 9/9 redundancy tests, and 5/5 importance tests)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
 | **System** | `GET /` | Root Welcome Endpoint | **PASS** | Returns `{"message": "Welcome to AI Summarizer API"}` with HTTP 200 |
 | **System** | `GET /health` | Service Heartbeat | **PASS** | Returns `{"status":"Running"}` with HTTP 200 |
 | **System** | `GET /docs` | Swagger UI API Documentation | **PASS** | Interactive OpenAPI documentation rendered successfully |
-| **System** | `GET /openapi.json` | OpenAPI Specification | **PASS** | Schema validated with 10 registered paths |
+| **System** | `GET /openapi.json` | OpenAPI Specification | **PASS** | Schema validated with 11 registered paths |
 | **CORS** | `OPTIONS /summarize` | CORS Preflight Handling | **PASS** | `access-control-allow-origin` header verified |
 | **Observability** | `GET /health` | Latency Header (`X-Process-Time`) | **PASS** | Latency header verified |
-| **Document Parsers** | `file_service.extract_text` | PDF PyMuPDF Extraction | **PASS** | Successfully parsed 4,012 characters from sample PDF |
-| **Document Parsers** | `file_service.extract_text` | DOCX python-docx Extraction | **PASS** | Successfully parsed 19,286 characters from sample DOCX |
+| **Document Parsers** | `file_service.extract_text` | PDF PyMuPDF Extraction | **PASS** | Successfully parsed sample PDF |
+| **Document Parsers** | `file_service.extract_text` | DOCX python-docx Extraction | **PASS** | Successfully parsed sample DOCX |
+| **Importance Engine** | `importance_service.score_importance` | Hybrid Heuristic & Signals | **PASS** | Score: 0.96 with 5 active signals |
+| **Redundancy Engine** | `redundancy_service.detect_and_filter_redundancy` | Near-Duplicate & Quality Selection | **PASS** | 1 redundancy event detected, kept Section 2 over Section 1 |
+| **Faithfulness Engine** | `faithfulness_service.check_faithfulness` | Grounding & Numerical Validation | **PASS** | Faithful: 1.00 score; Unfaithful: 2 unsupported claims detected |
 | **Error Handling** | `POST /summarize` | Unsupported format (`.exe`) | **PASS** | HTTP 400: Unsupported file format restriction |
 | **Error Handling** | `POST /summarize` | Empty file validation | **PASS** | HTTP 400: empty-file validation |
 | **Error Handling** | `POST /summarize` | Missing file payload | **PASS** | HTTP 422: FastAPI validation |
@@ -43,12 +47,16 @@
 | **Error Handling** | `POST /update-summary` | Whitespace input | **PASS** | HTTP 400: previous summary validation |
 | **Error Handling** | `POST /summarize-hierarchical` | Invalid chunk-size boundary | **PASS** | HTTP 400: chunk-size validation |
 | **Error Handling** | `POST /summarize-media` | Non-media extension | **PASS** | HTTP 400: media extension validation |
+| **Error Handling** | `POST /check-faithfulness` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
+| **Error Handling** | `POST /check-faithfulness` | Missing source text & file | **PASS** | HTTP 400: required source material validation |
 | **Single Document** | `POST /summarize` | `document_a.txt` | **PASS** | HTTP 200: valid Groq-generated summary |
 | **Key Points** | `POST /key-points` | `keypoints_test.txt` | **PASS** | HTTP 200: requested key points returned |
 | **Multi-Document** | `POST /summarize-multiple` | `document_a.txt` + `document_b.txt` | **PASS** | HTTP 200: multi-document synthesis |
 | **Compare** | `POST /compare` | `compare_a.txt` vs `compare_b.txt` | **PASS** | HTTP 200: comparative report |
 | **Update Summary** | `POST /update-summary` | Previous summary vs current text | **PASS** | HTTP 200: delta analysis |
-| **Hierarchical** | `POST /summarize-hierarchical` | Concurrent Map-Reduce pipeline | **PASS** | HTTP 200: section synthesis + master summary |
+| **Hierarchical** | `POST /summarize-hierarchical` | Map-Reduce with Importance, Redundancy & Faithfulness | **PASS** | HTTP 200: section synthesis, importance signals, redundancy filter, and faithfulness verification |
+| **Faithfulness Check**| `POST /check-faithfulness` | Direct Text-based Verification | **PASS** | HTTP 200: verified supported claims, score 1.00 |
+| **Faithfulness Check**| `POST /check-faithfulness` | File-based Document Verification | **PASS** | HTTP 200: verified claims against uploaded file |
 | **Media Pipeline** | `POST /summarize-media` | `voice_test.mp3` | **PASS** | HTTP 200: FFmpeg + Whisper + Groq pipeline |
 
 ---

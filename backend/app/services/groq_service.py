@@ -28,6 +28,7 @@ from app.services.redundancy_service import (
     detect_and_filter_redundancy,
     filter_synthesis_sections
 )
+from app.services.faithfulness_service import check_faithfulness
 
 logger = get_logger("groq")
 
@@ -1044,6 +1045,7 @@ def hierarchical_summarize(
             executive=executive
         )
         importance = score_importance(text=chunks[0], chunk_index=1, total_chunks=1)
+        faithfulness = check_faithfulness(source_text=chunks[0], summary_text=final_summary, use_llm=False)
         return {
             "final_summary": final_summary,
             "section_summaries": [
@@ -1058,7 +1060,8 @@ def hierarchical_summarize(
                 }
             ],
             "total_sections": 1,
-            "redundant_sections_count": 0
+            "redundant_sections_count": 0,
+            "faithfulness": faithfulness
         }
 
     # --------------------------------------------------------
@@ -1221,9 +1224,17 @@ INTERMEDIATE SECTION SUMMARIES:
     total_elapsed = time.perf_counter() - start_hierarchical
     logger.info(f"Hierarchical summarization completed in {total_elapsed * 1000.0:.1f}ms")
 
+    # Faithfulness verification of final summary against full source text
+    faithfulness = check_faithfulness(
+        source_text=text,
+        summary_text=final_summary,
+        use_llm=False
+    )
+
     return {
         "final_summary": final_summary,
         "section_summaries": section_summaries,
         "total_sections": len(section_summaries),
-        "redundant_sections_count": redundant_count
+        "redundant_sections_count": redundant_count,
+        "faithfulness": faithfulness
     }

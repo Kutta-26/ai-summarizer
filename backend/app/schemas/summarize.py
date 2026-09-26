@@ -135,3 +135,93 @@ class HierarchicalSummaryResponse(BaseModel):
         description="Number of redundant sections identified and suppressed from final synthesis",
         examples=[1]
     )
+    faithfulness: Optional["FaithfulnessResult"] = Field(
+        default=None,
+        description="Faithfulness verification details assessing whether the final summary is grounded in the source document"
+    )
+
+
+class FaithfulnessClaim(BaseModel):
+    """Individual factual claim extracted from a summary with verification evidence."""
+    claim: str = Field(
+        ...,
+        description="Text of the extracted factual claim",
+        examples=["Revenue increased by 25% to $4.2 million."]
+    )
+    status: Literal["SUPPORTED", "PARTIALLY_SUPPORTED", "UNSUPPORTED", "UNCERTAIN"] = Field(
+        ...,
+        description="Verification status indicating evidence grounding in the source document",
+        examples=["SUPPORTED"]
+    )
+    evidence: Optional[str] = Field(
+        default=None,
+        description="Source document passage supporting or addressing the claim",
+        examples=["Quarterly revenue increased 25% year-over-year to $4.2 million in Q4."]
+    )
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score of the verification result between 0.0 and 1.0",
+        examples=[0.98]
+    )
+    claim_type: Optional[str] = Field(
+        default=None,
+        description="Class of claim: quantitative, date_specific, entity_statement, or factual",
+        examples=["quantitative"]
+    )
+    reason: Optional[str] = Field(
+        default=None,
+        description="Explanation detailing why the claim was classified with this status",
+        examples=["Directly supported by matching source passage."]
+    )
+
+
+class FaithfulnessResult(BaseModel):
+    """Overall faithfulness evaluation metrics and individual claim verification records."""
+    faithfulness_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Aggregated faithfulness score between 0.0 and 1.0",
+        examples=[0.92]
+    )
+    status: Literal["HIGH", "MODERATE", "LOW"] = Field(
+        ...,
+        description="Categorical faithfulness status: HIGH (>=0.80), MODERATE (0.50-0.79), LOW (<0.50)",
+        examples=["HIGH"]
+    )
+    claims_checked: int = Field(
+        ...,
+        ge=0,
+        description="Total number of factual claims extracted and checked",
+        examples=[5]
+    )
+    supported_claims: int = Field(
+        ...,
+        ge=0,
+        description="Count of fully supported claims",
+        examples=[4]
+    )
+    partially_supported_claims: int = Field(
+        ...,
+        ge=0,
+        description="Count of partially supported claims",
+        examples=[1]
+    )
+    unsupported_claims: int = Field(
+        ...,
+        ge=0,
+        description="Count of unsupported or inconsistent claims",
+        examples=[0]
+    )
+    uncertain_claims: Optional[int] = Field(
+        default=0,
+        ge=0,
+        description="Count of ambiguous or uncertain claims that could not be confidently verified",
+        examples=[0]
+    )
+    claims: list[FaithfulnessClaim] = Field(
+        default_factory=list,
+        description="List of individual claim verification records"
+    )

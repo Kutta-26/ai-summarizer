@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from typing import Literal, Annotated
+from typing import Literal, Annotated, Optional
 
 from app.core.config import MAX_FILE_SIZE, UPLOAD_DIR
 
@@ -7,10 +7,13 @@ from app.schemas.summarize import (
     SummaryResponse,
     KeyPointsResponse,
     HierarchicalSummaryResponse,
+    FaithfulnessResult,
     ErrorResponse
 )
 
 from app.services.file_service import extract_text
+
+from app.services.faithfulness_service import check_faithfulness
 
 from app.services.groq_service import (
     summarize_text,
@@ -146,6 +149,24 @@ YOUTUBE_RESPONSES = {
     500: {
         "model": ErrorResponse,
         "description": "Internal Server Error — Transcript retrieval or Groq LLM synthesis failure."
+    },
+}
+
+FAITHFULNESS_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — Missing both source file and source text, empty summary text, or unreadable document."
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Payload Too Large — Source file exceeds 10 MB limit."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required parameters."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Faithfulness verification processing failure."
     },
 }
 
@@ -1281,3 +1302,94 @@ def summarize_youtube_endpoint(
             status_code=500,
             detail=str(e)
         ) from e
+
+
+# ============================================================
+# FAITHFULNESS VERIFICATION ENDPOINT
+# ============================================================
+
+@router.post(
+    "/check-faithfulness",
+    response_model=FaithfulnessResult,
+    summary="Check Summary Faithfulness against Source Material",
+    description=(
+        "Evaluate whether a generated summary is supported by the source document.\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Claim Extraction**: Extracts substantive factual and quantitative claims from the summary.\n"
+        "2. **Evidence Matching**: Deterministically matches claims to source document passages using token overlap and sequence similarity.\n"
+        "3. **Validation Layers**: Performs deterministic numerical, date, and named entity verification.\n"
+        "4. **Optional LLM Gate**: Resolves ambiguous claims via bounded Groq verification if enabled.\n"
+        "5. **Scoring**: Computes bounded faithfulness score (0.0–1.0) and categorical status (HIGH, MODERATE, LOW).\n\n"
+        "### Input Options:\n"
+        "- Supply source material either via file upload (`file`) OR direct text (`source_text`)."
+    ),
+    response_description="Structured faithfulness verification results with individual claim breakdowns",
+    tags=["Analysis & Extraction"],
+    responses=FAITHFULNESS_RESPONSES
+)
+def check_faithfulness_endpoint(
+    summary_text: Annotated[
+        str,
+        Form(description="Generated summary text to evaluate for faithfulness against source material")
+    ],
+    source_text: Annotated[
+        Optional[str],
+        Form(description="Raw source text to verify the summary against (optional if 'file' is provided)")
+    ] = None,
+    file: Annotated[
+        Optional[UploadFile],
+        File(description="Source document file (TXT, PDF, DOCX) to verify against (optional if 'source_text' is provided)")
+    ] = None,
+    use_llm: Annotated[
+        bool,
+        Form(description="When true, leverages bounded Groq LLM verification for ambiguous claims")
+    ] = False
+):
+    if not summary_text or not summary_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Summary text cannot be empty."
+        )
+
+    file_path = None
+    extracted_source = ""
+
+    try:
+        # Handle file upload if supplied
+        if file and file.filename:
+            validate_file(file)
+            file_path = save_uploaded_file(file)
+            extracted_source = extract_text(file_path)
+
+        # Merge or prioritize direct source_text if provided
+        final_source = (source_text or "").strip() or extracted_source.strip()
+
+        if not final_source:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'file' or 'source_text' must be provided with readable source content."
+            )
+
+        result = check_faithfulness(
+            source_text=final_source,
+            summary_text=summary_text,
+            use_llm=use_llm
+        )
+
+        return FaithfulnessResult(**result)
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Faithfulness verification failed: {str(e)}"
+        ) from e
+    finally:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)

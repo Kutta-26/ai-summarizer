@@ -12,6 +12,7 @@ from main import app
 from app.services.file_service import extract_text, extract_pdf, extract_docx
 from app.services.importance_service import score_importance
 from app.services.redundancy_service import detect_and_filter_redundancy, check_pairwise_redundancy
+from app.services.faithfulness_service import check_faithfulness
 
 client = TestClient(app)
 root_dir = Path(__file__).resolve().parent.parent
@@ -70,7 +71,8 @@ def run_tests():
             "/summarize-media",
             "/update-summary",
             "/summarize-hierarchical",
-            "/summarize-youtube"
+            "/summarize-youtube",
+            "/check-faithfulness"
         ]
         has_all_routes = all(r in endpoints for r in expected_routes)
         is_openapi_303 = data.get("openapi") == "3.0.3"
@@ -188,6 +190,41 @@ def run_tests():
         log_result("Redundancy Detection (Layered Near-Duplicate & Quality Selection)", is_ok, f"{len(records)} redundancy event detected, kept Section 2 over Section 1")
     except Exception as e:
         log_result("Redundancy Detection (Layered Near-Duplicate & Quality Selection)", False, str(e))
+
+    # ============================================================
+    # 2.3 Faithfulness Verification Engine Unit Test
+    # ============================================================
+    try:
+        sample_src = (
+            "CloudCorp reported that Q3 2025 revenue grew by 25% year-over-year to $4.2 million. "
+            "The engineering team deployed 12 distributed nodes across 3 availability zones."
+        )
+        sample_faithful_sum = (
+            "Revenue grew by 25% to $4.2 million in Q3 2025. "
+            "12 distributed nodes were deployed across 3 availability zones."
+        )
+        sample_unfaithful_sum = (
+            "Revenue grew by 35% to $4.2 million in Q3 2025. "
+            "CloudCorp acquired MegaTech for $50 million in 2026."
+        )
+
+        res_faithful = check_faithfulness(source_text=sample_src, summary_text=sample_faithful_sum)
+        res_unfaithful = check_faithfulness(source_text=sample_src, summary_text=sample_unfaithful_sum)
+
+        is_ok = (
+            res_faithful["faithfulness_score"] >= 0.80 and
+            res_faithful["status"] == "HIGH" and
+            res_faithful["unsupported_claims"] == 0 and
+            res_unfaithful["unsupported_claims"] >= 1 and
+            res_unfaithful["faithfulness_score"] < 0.60
+        )
+        log_result(
+            "Faithfulness Verification (Deterministic Grounding & Numerical Validation)",
+            is_ok,
+            f"Faithful score: {res_faithful['faithfulness_score']:.2f}, Unfaithful detected: {res_unfaithful['unsupported_claims']} claim(s)"
+        )
+    except Exception as e:
+        log_result("Faithfulness Verification (Deterministic Grounding & Numerical Validation)", False, str(e))
 
     # ============================================================
     # 3. Input Validation, Bounds & Security Tests
@@ -386,6 +423,26 @@ def run_tests():
     except Exception as e:
         log_result("POST /summarize-media (Non-media extension)", False, str(e))
 
+    # Faithfulness empty summary text validation
+    try:
+        res = client.post(
+            "/check-faithfulness",
+            data={"source_text": "Valid source content.", "summary_text": "   "}
+        )
+        log_result("POST /check-faithfulness (Whitespace summary text -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /check-faithfulness (Whitespace summary text)", False, str(e))
+
+    # Faithfulness missing both file and source_text
+    try:
+        res = client.post(
+            "/check-faithfulness",
+            data={"summary_text": "Some summary text."}
+        )
+        log_result("POST /check-faithfulness (Missing source text & file -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /check-faithfulness (Missing source text & file)", False, str(e))
+
     # ============================================================
     # 4. Functional End-to-End Tests (Live or Deterministic Mock)
     # ============================================================
@@ -527,12 +584,70 @@ def run_tests():
             "redundant_sections_count" in data and
             all("is_redundant" in s for s in sections)
         )
-        is_ok = res.status_code == 200 and "final_summary" in data and "section_summaries" in data and has_importance and has_redundancy_meta
-        log_result(f"POST /summarize-hierarchical (Map-Reduce with Importance & Redundancy {mode_label})", is_ok, f"Status {res.status_code}, {data.get('total_sections', 0)} section(s), {data.get('redundant_sections_count', 0)} redundant")
+        has_faithfulness = (
+            "faithfulness" in data and
+            data["faithfulness"] is not None and
+            0.0 <= data["faithfulness"]["faithfulness_score"] <= 1.0 and
+            "status" in data["faithfulness"]
+        )
+        is_ok = (
+            res.status_code == 200 and
+            "final_summary" in data and
+            "section_summaries" in data and
+            has_importance and
+            has_redundancy_meta and
+            has_faithfulness
+        )
+        faith_score = data.get("faithfulness", {}).get("faithfulness_score", 0.0)
+        log_result(f"POST /summarize-hierarchical (Map-Reduce with Importance, Redundancy & Faithfulness {mode_label})", is_ok, f"Status {res.status_code}, {data.get('total_sections', 0)} section(s), {data.get('redundant_sections_count', 0)} redundant, faith={faith_score:.2f}")
         if not is_ci_mode:
             time.sleep(0.5)
     except Exception as e:
         log_result(f"POST /summarize-hierarchical (Concurrent Map-Reduce {mode_label})", False, str(e))
+
+    # POST /check-faithfulness (Direct Text-based Verification)
+    try:
+        source_sample = "CloudCorp reported $4.2 million in quarterly revenue with 25% year-over-year growth in 2025."
+        summary_sample = "Revenue reached $4.2 million with 25% growth in 2025."
+        res = client.post(
+            "/check-faithfulness",
+            data={"source_text": source_sample, "summary_text": summary_sample}
+        )
+        data = res.json()
+        is_ok = (
+            res.status_code == 200 and
+            data.get("faithfulness_score") >= 0.80 and
+            data.get("status") == "HIGH" and
+            data.get("claims_checked") >= 1 and
+            data.get("supported_claims") >= 1
+        )
+        log_result(f"POST /check-faithfulness (Text-based Verification {mode_label})", is_ok, f"Status {res.status_code}, score={data.get('faithfulness_score')}")
+        if not is_ci_mode:
+            time.sleep(0.5)
+    except Exception as e:
+        log_result(f"POST /check-faithfulness (Text-based Verification {mode_label})", False, str(e))
+
+    # POST /check-faithfulness (File-based Verification)
+    try:
+        doc_a_path = root_dir / "document_a.txt"
+        with open(doc_a_path, "rb") as f:
+            res = client.post(
+                "/check-faithfulness",
+                files={"file": ("document_a.txt", f, "text/plain")},
+                data={"summary_text": "Artificial intelligence applications require scalable cloud architectures."}
+            )
+        data = res.json()
+        is_ok = (
+            res.status_code == 200 and
+            "faithfulness_score" in data and
+            "claims" in data and
+            data.get("claims_checked") >= 1
+        )
+        log_result(f"POST /check-faithfulness (File-based Verification {mode_label})", is_ok, f"Status {res.status_code}, score={data.get('faithfulness_score')}")
+        if not is_ci_mode:
+            time.sleep(0.5)
+    except Exception as e:
+        log_result(f"POST /check-faithfulness (File-based Verification {mode_label})", False, str(e))
 
     # POST /summarize-media (Audio with faster-whisper)
     try:

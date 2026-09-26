@@ -25,6 +25,9 @@
 8. **Update / Delta Summaries**: Detect and summarize "what has changed" between a previous summary and current document contents.
 9. **Hierarchical Summarization (Map-Reduce)**: Structural section chunking and recursive multi-stage synthesis designed for long documents, reports, and books.
 10. **YouTube Video Summarization**: Direct YouTube / Shorts URL transcript extraction and LLM summarization.
+11. **Importance Scoring (Phase 1)**: Heuristic and signal-based section scoring identifying key findings, metrics, decisions, and risks.
+12. **Redundancy Detection & Removal (Phase 2)**: Deterministic near-duplicate and semantic filtering preventing repetitive section synthesis.
+13. **Faithfulness Checking (Phase 3)**: Source-grounded claim extraction, numerical/date/entity validation, and explainable faithfulness scoring detecting unsupported statements.
 
 ---
 

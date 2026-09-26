@@ -323,3 +323,40 @@ export async function summarizeYouTube({ url, length, format, executive }) {
     throw err;
   }
 }
+
+/**
+ * Check faithfulness of summary against source material
+ * POST /check-faithfulness
+ */
+export async function checkFaithfulness({ file, sourceText, summaryText, useLlm }) {
+  const formData = new FormData();
+  formData.append('summary_text', summaryText);
+  if (file) {
+    formData.append('file', file);
+  }
+  if (sourceText) {
+    formData.append('source_text', sourceText);
+  }
+  formData.append('use_llm', useLlm ? 'true' : 'false');
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/check-faithfulness`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw await handleResponseError(response);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    if (err.name === 'TypeError' && err.message.includes('fetch')) {
+      throw new Error(
+        `Could not reach backend at ${API_BASE_URL}. Please ensure the backend server is running.`
+      );
+    }
+    throw err;
+  }
+}

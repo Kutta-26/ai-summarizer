@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import FileUpload from './FileUpload';
 import SummaryResult from './SummaryResult';
 import { summarizeHierarchical } from '../services/api';
-import { Layers, Sparkles, Loader2, AlertCircle, ListChecks } from 'lucide-react';
+import { Layers, Sparkles, Loader2, AlertCircle, ListChecks, ShieldCheck } from 'lucide-react';
 
 export default function HierarchicalSummarizer({ onError }) {
   const [file, setFile] = useState(null);
@@ -15,6 +15,7 @@ export default function HierarchicalSummarizer({ onError }) {
   const [error, setError] = useState(null);
   const [hierarchicalResult, setHierarchicalResult] = useState(null);
   const [showSections, setShowSections] = useState(false);
+  const [showFaithfulnessClaims, setShowFaithfulnessClaims] = useState(false);
 
   const handleFileSelect = (selectedFile) => {
     setFile(selectedFile);
@@ -210,6 +211,137 @@ export default function HierarchicalSummarizer({ onError }) {
             title={`Hierarchical Summary of ${file ? file.name : 'Document'}`}
             metaInfo={`MAP-REDUCE • ${hierarchicalResult.total_sections} SECTIONS${hierarchicalResult.redundant_sections_count > 0 ? ` (${hierarchicalResult.redundant_sections_count} REDUNDANT REMOVED)` : ''} • ${length.toUpperCase()} • ${format.toUpperCase()}`}
           />
+
+          {/* Faithfulness Verification Card */}
+          {hierarchicalResult.faithfulness && (
+            <div className="controls-card" style={{ padding: '1.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '10px',
+                    backgroundColor: hierarchicalResult.faithfulness.status === 'HIGH' ? 'rgba(34, 197, 94, 0.15)' : hierarchicalResult.faithfulness.status === 'MODERATE' ? 'rgba(234, 179, 8, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: hierarchicalResult.faithfulness.status === 'HIGH' ? '#4ade80' : hierarchicalResult.faithfulness.status === 'MODERATE' ? '#facc15' : '#f87171'
+                  }}>
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Source Faithfulness Verification</h3>
+                      <span style={{
+                        fontSize: '0.75rem',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        backgroundColor: hierarchicalResult.faithfulness.status === 'HIGH' ? 'rgba(34, 197, 94, 0.2)' : hierarchicalResult.faithfulness.status === 'MODERATE' ? 'rgba(234, 179, 8, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                        color: hierarchicalResult.faithfulness.status === 'HIGH' ? '#4ade80' : hierarchicalResult.faithfulness.status === 'MODERATE' ? '#facc15' : '#f87171',
+                        fontWeight: 700
+                      }}>
+                        {hierarchicalResult.faithfulness.status} ({Math.round(hierarchicalResult.faithfulness.faithfulness_score * 100)}%)
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Claims checked: {hierarchicalResult.faithfulness.claims_checked} • Supported: {hierarchicalResult.faithfulness.supported_claims} • Unsupported: {hierarchicalResult.faithfulness.unsupported_claims}
+                      {hierarchicalResult.faithfulness.partially_supported_claims > 0 && ` • Partial: ${hierarchicalResult.faithfulness.partially_supported_claims}`}
+                    </div>
+                  </div>
+                </div>
+
+                {hierarchicalResult.faithfulness.claims && hierarchicalResult.faithfulness.claims.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFaithfulnessClaims(!showFaithfulnessClaims)}
+                    className="btn-secondary"
+                    style={{
+                      padding: '0.4rem 0.9rem',
+                      fontSize: '0.85rem',
+                      background: 'transparent',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {showFaithfulnessClaims ? 'Hide Claims' : 'Inspect Claims'}
+                  </button>
+                )}
+              </div>
+
+              {showFaithfulnessClaims && hierarchicalResult.faithfulness.claims && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                  {hierarchicalResult.faithfulness.claims.map((claim, idx) => {
+                    const isSupported = claim.status === 'SUPPORTED';
+                    const isUnsupported = claim.status === 'UNSUPPORTED';
+                    const isPartial = claim.status === 'PARTIALLY_SUPPORTED';
+                    const statusColor = isSupported ? '#4ade80' : isUnsupported ? '#f87171' : isPartial ? '#facc15' : '#94a3b8';
+                    const statusBg = isSupported ? 'rgba(34, 197, 94, 0.15)' : isUnsupported ? 'rgba(239, 68, 68, 0.15)' : isPartial ? 'rgba(234, 179, 8, 0.15)' : 'rgba(148, 163, 184, 0.15)';
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: '0.85rem 1rem',
+                          backgroundColor: 'var(--bg-surface-elevated, #1a2234)',
+                          borderRadius: 'var(--radius-md)',
+                          border: `1px solid ${isUnsupported ? 'rgba(239, 68, 68, 0.35)' : 'var(--border-color)'}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{
+                              fontSize: '0.72rem',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              backgroundColor: statusBg,
+                              color: statusColor,
+                              fontWeight: 600
+                            }}>
+                              {claim.status}
+                            </span>
+                            {claim.claim_type && (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #94a3b8)', textTransform: 'capitalize' }}>
+                                ({claim.claim_type.replace('_', ' ')})
+                              </span>
+                            )}
+                          </div>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted, #94a3b8)' }}>
+                            Confidence: {Math.round(claim.confidence * 100)}%
+                          </span>
+                        </div>
+
+                        <p style={{ margin: 0, fontSize: '0.88rem', lineHeight: '1.4', color: 'var(--text-primary)' }}>
+                          {claim.claim}
+                        </p>
+
+                        {claim.reason && (
+                          <div style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: isUnsupported ? '#f87171' : 'var(--text-muted, #94a3b8)', fontStyle: 'italic' }}>
+                            {claim.reason}
+                          </div>
+                        )}
+
+                        {claim.evidence && (
+                          <div style={{
+                            marginTop: '0.5rem',
+                            padding: '0.5rem 0.75rem',
+                            backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                            borderLeft: `3px solid ${statusColor}`,
+                            borderRadius: '4px',
+                            fontSize: '0.8rem',
+                            color: 'var(--text-secondary)'
+                          }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>Source Evidence:</strong> "{claim.evidence}"
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Section Breakdown Accordion / Toggle */}
           {hierarchicalResult.section_summaries && hierarchicalResult.section_summaries.length > 0 && (

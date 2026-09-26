@@ -140,3 +140,42 @@ flowchart TD
   - Every HTTP interaction records high-resolution wall-clock duration (`time.perf_counter()`).
   - Responses automatically attach `X-Process-Time` (e.g. `0.0016s`), offering transparent client-side and APM visibility.
   - Structured logging across `ai_summarizer.http`, `ai_summarizer.media`, and `ai_summarizer.groq` traces execution milestones while guaranteeing zero credential or document content leakage.
+
+---
+
+## 9. Source-Grounded Faithfulness Checking (Phase 3)
+
+The platform incorporates a layered, source-grounded faithfulness checking architecture (`backend/app/services/faithfulness_service.py`) designed to verify whether a generated summary is supported by the source document and detect unsupported or potentially hallucinated claims.
+
+```mermaid
+flowchart TD
+    Source[Source Document] --> PreFilter[Sentence / Paragraph Chunking]
+    Summary[Generated Summary] --> ClaimExtract[Claim Extraction: Factual, Quantitative, Dates, Entities]
+
+    ClaimExtract --> DeterministicMatch[Candidate Evidence Retrieval: Token Overlap / Sequence Matcher]
+    Source --> DeterministicMatch
+
+    DeterministicMatch --> ValidationLayers{Deterministic Validation}
+    ValidationLayers -->|Numerical Check| NumVal[Numerical / Percentage / Currency Validation]
+    ValidationLayers -->|Date Check| DateVal[Date / Year Validation]
+    ValidationLayers -->|Entity Check| EntityVal[Named Entity / Proper Noun Validation]
+
+    NumVal & DateVal & EntityVal --> DecisionGate{Confident Classification?}
+    DecisionGate -->|Yes: Supported / Unsupported| ScoreEngine[Faithfulness Scoring Engine]
+    DecisionGate -->|No / Ambiguous| BoundedLLM[Optional Bounded LLM Verification with Groq]
+    BoundedLLM -->|Graceful Fallback on Error| Fallback[Fallback to Deterministic Classification]
+    Fallback --> ScoreEngine
+    BoundedLLM --> ScoreEngine
+
+    ScoreEngine --> Result[FaithfulnessResult: Score, Status, Claim Details]
+```
+
+### Verification Pipeline:
+1. **Level 1 — Claim Extraction**: Decomposes summary into discrete factual claims, extracting quantities, percentages, currency, dates, and named entities without treating trivial boilerplate as claims.
+2. **Level 2 — Source Evidence Matching**: Uses token Jaccard overlap, asymmetric containment, and sequence similarity to retrieve relevant candidate evidence passages from the source document.
+3. **Level 3 — Numerical Validation**: Validates all numbers, percentages, and currencies. If numbers in the claim diverge from or are absent in source evidence (e.g. summary says 35% but source states 25%), the claim is classified as an **unsupported/inconsistent numerical claim** (not a contradiction, which belongs to a future phase).
+4. **Level 4 — Date Validation**: Validates years, dates, and quarters against the source material.
+5. **Level 5 — Entity Validation**: Lightweight proper-noun and technology name verification against the source document.
+6. **Level 6 — Bounded LLM Verification**: Ambiguous or uncertain claims can be batched into a single Groq call with strict anti-hallucination prompts. Fails gracefully to deterministic classification on network error, rate limit, or timeout.
+7. **Explainable Scoring**: Calculates bounded score $0.0 \le \text{score} \le 1.0$ mapped to categorical status (`HIGH` for $\ge 0.80$, `MODERATE` for $0.50$–$0.79$, `LOW` for $< 0.50$).
+8. **Hierarchical & API Integration**: Integrated into the final synthesis phase of `POST /summarize-hierarchical` and accessible via standalone endpoint `POST /check-faithfulness`.
