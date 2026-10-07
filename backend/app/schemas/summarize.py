@@ -139,6 +139,10 @@ class HierarchicalSummaryResponse(BaseModel):
         default=None,
         description="Faithfulness verification details assessing whether the final summary is grounded in the source document"
     )
+    contradictions: Optional["ContradictionResult"] = Field(
+        default=None,
+        description="Contradiction and conflict detection details assessing whether the final summary conflicts with the source document"
+    )
 
 
 class FaithfulnessClaim(BaseModel):
@@ -224,4 +228,91 @@ class FaithfulnessResult(BaseModel):
     claims: list[FaithfulnessClaim] = Field(
         default_factory=list,
         description="List of individual claim verification records"
+    )
+
+
+class ContradictionItem(BaseModel):
+    """Individual contradiction or factual conflict detected between summary and source."""
+    claim: str = Field(
+        ...,
+        description="Summary claim text where the conflict was detected",
+        examples=["Revenue increased by 35%."]
+    )
+    source_evidence: Optional[str] = Field(
+        default=None,
+        description="Source document passage that contradicts the claim",
+        examples=["Revenue increased by 25%."]
+    )
+    conflict_type: Literal[
+        "numerical_conflict",
+        "percentage_conflict",
+        "temporal_conflict",
+        "entity_conflict",
+        "factual_conflict"
+    ] = Field(
+        ...,
+        description="Category of detected contradiction",
+        examples=["percentage_conflict"]
+    )
+    confidence: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score of the conflict detection between 0.0 and 1.0",
+        examples=[0.95]
+    )
+    severity: Literal["HIGH", "MEDIUM", "LOW"] = Field(
+        default="HIGH",
+        description="Severity level of the contradiction",
+        examples=["HIGH"]
+    )
+    reason: Optional[str] = Field(
+        default=None,
+        description="Detailed explanation of the contradiction",
+        examples=["Percentage conflict: summary states '35%', but source evidence states '25%' for the same metric."]
+    )
+    summary_value: Optional[str] = Field(
+        default=None,
+        description="Conflicting value extracted from the summary",
+        examples=["35%"]
+    )
+    source_value: Optional[str] = Field(
+        default=None,
+        description="Contradicting value extracted from the source evidence",
+        examples=["25%"]
+    )
+
+
+class ContradictionResult(BaseModel):
+    """Structured result model for summary contradiction and conflict detection."""
+    has_contradiction: bool = Field(
+        ...,
+        description="True if one or more contradictions or conflicts were detected",
+        examples=[True]
+    )
+    status: Literal["CLEAN", "CONFLICT_DETECTED"] = Field(
+        ...,
+        description="High-level status: CLEAN (no contradictions found) or CONFLICT_DETECTED",
+        examples=["CONFLICT_DETECTED"]
+    )
+    total_conflicts: int = Field(
+        ...,
+        ge=0,
+        description="Total number of detected contradictions",
+        examples=[1]
+    )
+    conflicts_by_type: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Breakdown count of conflicts by category",
+        examples=[{"percentage_conflict": 1}]
+    )
+    claims_checked: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of substantive claims evaluated",
+        examples=[3]
+    )
+    conflicts: list[ContradictionItem] = Field(
+        default_factory=list,
+        description="List of detected contradiction records"
     )

@@ -16,6 +16,7 @@ export default function HierarchicalSummarizer({ onError }) {
   const [hierarchicalResult, setHierarchicalResult] = useState(null);
   const [showSections, setShowSections] = useState(false);
   const [showFaithfulnessClaims, setShowFaithfulnessClaims] = useState(false);
+  const [showContradictions, setShowContradictions] = useState(false);
 
   const handleFileSelect = (selectedFile) => {
     setFile(selectedFile);
@@ -211,6 +212,122 @@ export default function HierarchicalSummarizer({ onError }) {
             title={`Hierarchical Summary of ${file ? file.name : 'Document'}`}
             metaInfo={`MAP-REDUCE • ${hierarchicalResult.total_sections} SECTIONS${hierarchicalResult.redundant_sections_count > 0 ? ` (${hierarchicalResult.redundant_sections_count} REDUNDANT REMOVED)` : ''} • ${length.toUpperCase()} • ${format.toUpperCase()}`}
           />
+
+          
+          {/* Contradiction Detection Card */}
+          {hierarchicalResult.contradictions && (
+            <div className="controls-card" style={{ padding: '1.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '10px',
+                    backgroundColor: hierarchicalResult.contradictions.has_contradiction ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)',
+                    color: hierarchicalResult.contradictions.has_contradiction ? '#f87171' : '#4ade80'
+                  }}>
+                    <AlertCircle size={22} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Contradiction Check</h3>
+                      <span style={{
+                        fontSize: '0.75rem',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        backgroundColor: hierarchicalResult.contradictions.has_contradiction ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)',
+                        color: hierarchicalResult.contradictions.has_contradiction ? '#f87171' : '#4ade80',
+                        fontWeight: 700
+                      }}>
+                        {hierarchicalResult.contradictions.has_contradiction ? `${hierarchicalResult.contradictions.total_conflicts} Contradictions Detected` : 'No contradictions detected'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Claims checked: {hierarchicalResult.contradictions.claims_checked} � Status: {hierarchicalResult.contradictions.status}
+                    </div>
+                  </div>
+                </div>
+
+                {hierarchicalResult.contradictions.has_contradiction && (
+                  <button
+                    type="button"
+                    onClick={() => setShowContradictions(!showContradictions)}
+                    className="btn-secondary"
+                    style={{
+                      padding: '0.4rem 0.9rem',
+                      fontSize: '0.85rem',
+                      background: 'transparent',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {showContradictions ? 'Hide Contradictions' : 'Inspect Contradictions'}
+                  </button>
+                )}
+              </div>
+
+              {showContradictions && hierarchicalResult.contradictions.conflicts && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                  {hierarchicalResult.contradictions.conflicts.map((conflict, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '0.85rem 1rem',
+                        backgroundColor: 'var(--bg-surface-elevated, #1a2234)',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid rgba(239, 68, 68, 0.35)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{
+                            fontSize: '0.72rem',
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                            color: '#f87171',
+                            fontWeight: 600
+                          }}>
+                            {conflict.conflict_type.replace('_', ' ').toUpperCase()}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#facc15' }}>
+                            Severity: {conflict.severity}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted, #94a3b8)' }}>
+                          Confidence: {Math.round(conflict.confidence * 100)}%
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '0.8rem' }}>
+                        <div>
+                          <strong style={{ fontSize: '0.8rem', color: '#f87171' }}>SUMMARY:</strong>
+                          <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-primary)' }}>{conflict.claim}</p>
+                          <div style={{ fontSize: '0.8rem', color: '#f87171', marginTop: '4px' }}>Value: {conflict.summary_value}</div>
+                        </div>
+                        <div>
+                          <strong style={{ fontSize: '0.8rem', color: '#4ade80' }}>SOURCE:</strong>
+                          <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{conflict.source_evidence}</p>
+                          <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '4px' }}>Value: {conflict.source_value}</div>
+                        </div>
+                      </div>
+
+                      {conflict.reason && (
+                        <div style={{ marginTop: '0.8rem', fontSize: '0.8rem', color: 'var(--text-muted, #94a3b8)', fontStyle: 'italic', borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem' }}>
+                          {conflict.reason}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Faithfulness Verification Card */}
           {hierarchicalResult.faithfulness && (

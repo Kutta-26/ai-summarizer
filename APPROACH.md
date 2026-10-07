@@ -179,3 +179,60 @@ flowchart TD
 6. **Level 6 — Bounded LLM Verification**: Ambiguous or uncertain claims can be batched into a single Groq call with strict anti-hallucination prompts. Fails gracefully to deterministic classification on network error, rate limit, or timeout.
 7. **Explainable Scoring**: Calculates bounded score $0.0 \le \text{score} \le 1.0$ mapped to categorical status (`HIGH` for $\ge 0.80$, `MODERATE` for $0.50$–$0.79$, `LOW` for $< 0.50$).
 8. **Hierarchical & API Integration**: Integrated into the final synthesis phase of `POST /summarize-hierarchical` and accessible via standalone endpoint `POST /check-faithfulness`.
+
+## Phase 4: Contradiction / Conflict Detection
+
+To ensure output integrity, the system implements a dedicated contradiction and conflict detection engine.
+
+### Deterministic-First Architecture
+The system uses a strict deterministic-first approach rather than relying solely on LLMs. 
+1. **Candidate Evidence Ranking**: Claims are ranked against source evidence units by semantic frame and topic overlap.
+2. **Deterministic Rules**: Detected matches are run through five precise conflict categories:
+   - **percentage_conflict**: Direct percentage mismatches.
+   - **numerical_conflict**: Numerical conflicts where numbers refer to the same metric.
+   - **temporal_conflict**: Date, month, year, or quarter conflicts.
+   - **entity_conflict**: Entity substitution conflicts for exclusive transactions.
+   - **factual_conflict**: Direct factual conflicts via antonym inversion or polarity negation.
+
+### Bounded LLM Ambiguity Resolution
+If a claim has high semantic overlap with a source candidate but does not trigger a deterministic rule, it is considered ambiguous.
+- The system batches these ambiguous claims (up to a bounded limit of 5) and sends them to the LLM for verification.
+- The LLM returns a structured JSON array validating whether it is a true contradiction.
+- **Graceful Degradation**: If the LLM is unavailable, times out, or returns malformed data, the system gracefully degrades to the deterministic results without failing the request.
+
+### API Endpoint & Response Schema
+- **Endpoint**: `POST /check-contradictions`
+- **Response**:
+  ```json
+  {
+    "has_contradiction": true,
+    "status": "CONFLICT_DETECTED",
+    "total_conflicts": 1,
+    "conflicts_by_type": {"percentage_conflict": 1},
+    "claims_checked": 5,
+    "conflicts": [
+      {
+        "claim": "...",
+        "source_evidence": "...",
+        "conflict_type": "percentage_conflict",
+        "confidence": 0.95,
+        "severity": "HIGH",
+        "summary_value": "35%",
+        "source_value": "25%",
+        "reason": "..."
+      }
+    ]
+  }
+  ```
+
+### Frontend Contradiction Display
+The frontend integrates contradiction visualization into the Map-Reduce hierarchical summarization interface.
+- It features a **Contradiction Status Indicator** displaying the number of contradictions detected or a "clean" status.
+- An **Expandable Contradiction Card** shows the summary claim, source evidence, category, severity, confidence, and a clear reason for the conflict.
+
+### Testing Coverage
+The system includes robust unit tests covering:
+- All 5 deterministic conflict categories.
+- Bounded LLM ambiguity resolution.
+- LLM timeout/error fallback and graceful degradation.
+- Empty/invalid inputs and schema validation.

@@ -8,12 +8,14 @@ from app.schemas.summarize import (
     KeyPointsResponse,
     HierarchicalSummaryResponse,
     FaithfulnessResult,
+    ContradictionResult,
     ErrorResponse
 )
 
 from app.services.file_service import extract_text
 
 from app.services.faithfulness_service import check_faithfulness
+from app.services.contradiction_service import check_contradictions
 
 from app.services.groq_service import (
     summarize_text,
@@ -167,6 +169,24 @@ FAITHFULNESS_RESPONSES = {
     500: {
         "model": ErrorResponse,
         "description": "Internal Server Error — Faithfulness verification processing failure."
+    },
+}
+
+CONTRADICTION_RESPONSES = {
+    400: {
+        "model": ErrorResponse,
+        "description": "Bad Request — Missing both source file and source text, empty summary text, or unreadable document."
+    },
+    413: {
+        "model": ErrorResponse,
+        "description": "Payload Too Large — Source file exceeds 10 MB limit."
+    },
+    422: {
+        "description": "Unprocessable Entity — Missing required parameters."
+    },
+    500: {
+        "model": ErrorResponse,
+        "description": "Internal Server Error — Contradiction detection processing failure."
     },
 }
 
@@ -1389,6 +1409,96 @@ def check_faithfulness_endpoint(
         raise HTTPException(
             status_code=500,
             detail=f"Faithfulness verification failed: {str(e)}"
+        ) from e
+    finally:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+
+
+# ============================================================
+# CONTRADICTION & CONFLICT DETECTION ENDPOINT
+# ============================================================
+
+@router.post(
+    "/check-contradictions",
+    response_model=ContradictionResult,
+    summary="Detect Contradictions and Conflicts between Summary and Source",
+    description=(
+        "Evaluate whether a generated summary contains factual, numerical, percentage, temporal, or entity conflicts with the source document.\n\n"
+        "### Processing Pipeline:\n"
+        "1. **Claim Extraction**: Extracts substantive claims from the summary.\n"
+        "2. **Evidence Alignment**: Matches candidate source evidence by predicate and semantic frame.\n"
+        "3. **Deterministic Conflict Layers**: Evaluates numerical, percentage, temporal, entity, and factual polarity conflicts.\n"
+        "4. **Severity & Grounding**: Categorizes conflicts with machine-readable conflict types, confidence, and reasons.\n\n"
+        "### Input Options:\n"
+        "- Supply source material either via file upload (`file`) OR direct text (`source_text`)."
+    ),
+    response_description="Structured contradiction detection results with individual conflict breakdowns",
+    tags=["Analysis & Extraction"],
+    responses=CONTRADICTION_RESPONSES
+)
+def check_contradictions_endpoint(
+    summary_text: Annotated[
+        str,
+        Form(description="Generated summary text to evaluate for contradictions against source material")
+    ],
+    source_text: Annotated[
+        Optional[str],
+        Form(description="Raw source text to verify the summary against (optional if 'file' is provided)")
+    ] = None,
+    file: Annotated[
+        Optional[UploadFile],
+        File(description="Source document file (TXT, PDF, DOCX) to verify against (optional if 'source_text' is provided)")
+    ] = None,
+    use_llm: Annotated[
+        bool,
+        Form(description="When true, leverages bounded Groq LLM verification for ambiguous conflicts")
+    ] = False
+):
+    if not summary_text or not summary_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Summary text cannot be empty."
+        )
+
+    file_path = None
+    extracted_source = ""
+
+    try:
+        # Handle file upload if supplied
+        if file and file.filename:
+            validate_file(file)
+            file_path = save_uploaded_file(file)
+            extracted_source = extract_text(file_path)
+
+        # Merge or prioritize direct source_text if provided
+        final_source = (source_text or "").strip() or extracted_source.strip()
+
+        if not final_source:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'file' or 'source_text' must be provided with readable source content."
+            )
+
+        result = check_contradictions(
+            source_text=final_source,
+            summary_text=summary_text,
+            use_llm=use_llm
+        )
+
+        return ContradictionResult(**result)
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Contradiction detection failed: {str(e)}"
         ) from e
     finally:
         if file_path and os.path.exists(file_path):

@@ -1046,6 +1046,8 @@ def hierarchical_summarize(
         )
         importance = score_importance(text=chunks[0], chunk_index=1, total_chunks=1)
         faithfulness = check_faithfulness(source_text=chunks[0], summary_text=final_summary, use_llm=False)
+        from app.services.contradiction_service import check_contradictions
+        contradictions = check_contradictions(source_text=chunks[0], summary_text=final_summary, use_llm=False)
         return {
             "final_summary": final_summary,
             "section_summaries": [
@@ -1061,7 +1063,8 @@ def hierarchical_summarize(
             ],
             "total_sections": 1,
             "redundant_sections_count": 0,
-            "faithfulness": faithfulness
+            "faithfulness": faithfulness,
+            "contradictions": contradictions
         }
 
     # --------------------------------------------------------
@@ -1230,11 +1233,67 @@ INTERMEDIATE SECTION SUMMARIES:
         summary_text=final_summary,
         use_llm=False
     )
+    
+    from app.services.contradiction_service import check_contradictions
+    contradictions = check_contradictions(
+        source_text=text,
+        summary_text=final_summary,
+        use_llm=False
+    )
 
     return {
         "final_summary": final_summary,
         "section_summaries": section_summaries,
         "total_sections": len(section_summaries),
         "redundant_sections_count": redundant_count,
-        "faithfulness": faithfulness
+        "faithfulness": faithfulness,
+        "contradictions": contradictions
     }
+
+def check_ambiguous_contradictions_llm(ambiguous_claims, source_text):
+    import json
+    
+    if not ambiguous_claims:
+        return []
+        
+    prompt = f"""
+You are a factual verification assistant. Given the source text and a list of ambiguous summary claims and their closest candidate evidence, determine if any of the claims CONTRADICT the source text.
+A contradiction exists ONLY if the claim explicitly violates a fact in the source text. If a claim is simply absent or unsupported, it is NOT a contradiction.
+
+Source Text:
+{source_text}
+
+Claims to evaluate:
+{json.dumps(ambiguous_claims, indent=2)}
+
+Return your result as a JSON object with a single key "conflicts" containing an array of conflict objects. If there are no contradictions, return {{"conflicts": []}}.
+For each contradiction, return:
+{{
+    "claim": "the contradictory claim from the summary",
+    "source_evidence": "the specific sentence or part of the source text it contradicts",
+    "conflict_type": "factual_conflict",
+    "confidence": 0.9,
+    "severity": "HIGH",
+    "summary_value": "what the summary incorrectly states",
+    "source_value": "what the source text actually states",
+    "reason": "Clear explanation of why it contradicts"
+}}
+"""
+    messages = [
+        {"role": "system", "content": "You are a precise factual verification engine. Always return valid JSON."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    try:
+        response_text = _call_groq_chat(
+            messages=messages,
+            temperature=0.0,
+            operation="LLM ambiguity contradiction check",
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response_text)
+        return data.get("conflicts", [])
+    except Exception as e:
+        logger.error(f"LLM contradiction check failed: {{e}}")
+        return []
+

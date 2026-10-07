@@ -13,6 +13,7 @@ from app.services.file_service import extract_text, extract_pdf, extract_docx
 from app.services.importance_service import score_importance
 from app.services.redundancy_service import detect_and_filter_redundancy, check_pairwise_redundancy
 from app.services.faithfulness_service import check_faithfulness
+from app.services.contradiction_service import check_contradictions
 
 client = TestClient(app)
 root_dir = Path(__file__).resolve().parent.parent
@@ -72,7 +73,8 @@ def run_tests():
             "/update-summary",
             "/summarize-hierarchical",
             "/summarize-youtube",
-            "/check-faithfulness"
+            "/check-faithfulness",
+            "/check-contradictions"
         ]
         has_all_routes = all(r in endpoints for r in expected_routes)
         is_openapi_303 = data.get("openapi") == "3.0.3"
@@ -225,6 +227,34 @@ def run_tests():
         )
     except Exception as e:
         log_result("Faithfulness Verification (Deterministic Grounding & Numerical Validation)", False, str(e))
+
+    # ============================================================
+    # 2.4 Contradiction Detection Engine Unit Test
+    # ============================================================
+    try:
+        clean_src = "Revenue increased by 25% and the project was approved in March 2026."
+        clean_sum = "Revenue increased by 25% and the project was approved in March 2026."
+        res_clean = check_contradictions(source_text=clean_src, summary_text=clean_sum)
+
+        conflict_src = "Revenue was $25 million with 25% growth. The project was approved."
+        conflict_sum = "Revenue was $35 million with 35% growth. The project was rejected."
+        res_conflict = check_contradictions(source_text=conflict_src, summary_text=conflict_sum)
+
+        is_ok = (
+            res_clean["has_contradiction"] is False and
+            res_clean["status"] == "CLEAN" and
+            res_clean["total_conflicts"] == 0 and
+            res_conflict["has_contradiction"] is True and
+            res_conflict["status"] == "CONFLICT_DETECTED" and
+            res_conflict["total_conflicts"] >= 2
+        )
+        log_result(
+            "Contradiction Detection (Deterministic Numerical, Percentage & Factual Conflict)",
+            is_ok,
+            f"Clean conflicts: {res_clean['total_conflicts']}, Detected conflicts: {res_conflict['total_conflicts']}"
+        )
+    except Exception as e:
+        log_result("Contradiction Detection (Deterministic Conflict Engine)", False, str(e))
 
     # ============================================================
     # 3. Input Validation, Bounds & Security Tests
@@ -443,6 +473,26 @@ def run_tests():
     except Exception as e:
         log_result("POST /check-faithfulness (Missing source text & file)", False, str(e))
 
+    # Contradiction empty summary text validation
+    try:
+        res = client.post(
+            "/check-contradictions",
+            data={"source_text": "Valid source content.", "summary_text": "   "}
+        )
+        log_result("POST /check-contradictions (Whitespace summary text -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /check-contradictions (Whitespace summary text)", False, str(e))
+
+    # Contradiction missing both file and source_text
+    try:
+        res = client.post(
+            "/check-contradictions",
+            data={"summary_text": "Some summary text."}
+        )
+        log_result("POST /check-contradictions (Missing source text & file -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /check-contradictions (Missing source text & file)", False, str(e))
+
     # ============================================================
     # 4. Functional End-to-End Tests (Live or Deterministic Mock)
     # ============================================================
@@ -648,6 +698,50 @@ def run_tests():
             time.sleep(0.5)
     except Exception as e:
         log_result(f"POST /check-faithfulness (File-based Verification {mode_label})", False, str(e))
+
+    # POST /check-contradictions (Direct Text-based Detection)
+    try:
+        source_sample = "CloudCorp reported $4.2 million in quarterly revenue with 25% year-over-year growth in 2025."
+        summary_clean = "Revenue reached $4.2 million with 25% growth in 2025."
+        res = client.post(
+            "/check-contradictions",
+            data={"source_text": source_sample, "summary_text": summary_clean}
+        )
+        data = res.json()
+        is_ok = (
+            res.status_code == 200 and
+            data.get("has_contradiction") is False and
+            data.get("status") == "CLEAN" and
+            data.get("total_conflicts") == 0 and
+            data.get("claims_checked") >= 1
+        )
+        log_result(f"POST /check-contradictions (Text-based Detection {mode_label})", is_ok, f"Status {res.status_code}, status={data.get('status')}")
+        if not is_ci_mode:
+            time.sleep(0.5)
+    except Exception as e:
+        log_result(f"POST /check-contradictions (Text-based Detection {mode_label})", False, str(e))
+
+    # POST /check-contradictions (File-based Detection)
+    try:
+        doc_a_path = root_dir / "document_a.txt"
+        with open(doc_a_path, "rb") as f:
+            res = client.post(
+                "/check-contradictions",
+                files={"file": ("document_a.txt", f, "text/plain")},
+                data={"summary_text": "Artificial intelligence applications require scalable cloud architectures."}
+            )
+        data = res.json()
+        is_ok = (
+            res.status_code == 200 and
+            "has_contradiction" in data and
+            "status" in data and
+            "total_conflicts" in data
+        )
+        log_result(f"POST /check-contradictions (File-based Detection {mode_label})", is_ok, f"Status {res.status_code}, status={data.get('status')}")
+        if not is_ci_mode:
+            time.sleep(0.5)
+    except Exception as e:
+        log_result(f"POST /check-contradictions (File-based Detection {mode_label})", False, str(e))
 
     # POST /summarize-media (Audio with faster-whisper)
     try:
