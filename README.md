@@ -28,6 +28,7 @@
 11. **Importance Scoring (Phase 1)**: Heuristic and signal-based section scoring identifying key findings, metrics, decisions, and risks.
 12. **Redundancy Detection & Removal (Phase 2)**: Deterministic near-duplicate and semantic filtering preventing repetitive section synthesis.
 13. **Faithfulness Checking (Phase 3)**: Source-grounded claim extraction, numerical/date/entity validation, and explainable faithfulness scoring detecting unsupported statements.
+14. **Contradiction Detection (Phase 4)**: Deterministic-first conflict detection for numerical, percentage, temporal, and entity claims with bounded LLM ambiguity resolution.
 
 ---
 
@@ -167,6 +168,8 @@ The FastAPI backend exposes high-performance REST endpoints documented natively 
 | **Analysis & Extraction** | `/key-points` | `POST` | `file`, `number_of_points` | `multipart/form-data` | Salient takeaway extraction (1–20 points) |
 | **Analysis & Extraction** | `/compare` | `POST` | `file_a`, `file_b` | `multipart/form-data` | Side-by-side comparative analysis of two documents |
 | **Analysis & Extraction** | `/update-summary` | `POST` | `previous_summary`, `current_text` | `application/x-www-form-urlencoded` | Delta change detection (new, changed, removed info) |
+| **Analysis & Extraction** | `/check-faithfulness` | `POST` | `source_text`, `summary_text`, `file` | `multipart/form-data` | Check if summary claims are supported by the source |
+| **Analysis & Extraction** | `/check-contradictions` | `POST` | `source_text`, `summary_text`, `file` | `multipart/form-data` | Detect numerical, percentage, temporal, and factual conflicts |
 | **Media & Video** | `/summarize-media` | `POST` | `file`, `length`, `format`, `executive` | `multipart/form-data` | Audio/video transcription (Whisper) & summarization |
 | **Media & Video** | `/summarize-youtube` | `POST` | `url`, `length`, `format`, `executive` | `application/x-www-form-urlencoded` | Direct YouTube transcript extraction & summarization |
 
