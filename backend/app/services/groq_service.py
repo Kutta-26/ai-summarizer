@@ -107,7 +107,8 @@ def _handle_groq_exception(e: Exception, operation: str = "operation") -> Runtim
 def _call_groq_chat(
     messages: list[dict],
     temperature: float = 0.2,
-    operation: str = "operation"
+    operation: str = "operation",
+    response_format: dict = None
 ) -> str:
     """
     Executes a Groq chat completion with automatic exponential backoff for transient rate limits and network drops.
@@ -118,11 +119,15 @@ def _call_groq_chat(
     for attempt in range(1, max_attempts + 1):
         try:
             groq_client = get_groq_client()
-            response = groq_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=messages,
-                temperature=temperature
-            )
+            create_kwargs = {
+                "model": MODEL_NAME,
+                "messages": messages,
+                "temperature": temperature
+            }
+            if response_format:
+                create_kwargs["response_format"] = response_format
+
+            response = groq_client.chat.completions.create(**create_kwargs)
 
             content = response.choices[0].message.content
             if not content or not content.strip():
@@ -1294,6 +1299,6 @@ For each contradiction, return:
         data = json.loads(response_text)
         return data.get("conflicts", [])
     except Exception as e:
-        logger.error(f"LLM contradiction check failed: {{e}}")
+        logger.error(f"LLM contradiction check failed: {e}")
         return []
 

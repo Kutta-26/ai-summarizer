@@ -15,7 +15,7 @@
 ## 2. Automated Test Execution Matrix
 
 ### Overall Result: 44/44 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 17/17 dedicated faithfulness unit tests, 9/9 redundancy tests, and 5/5 importance tests)*
+*(Plus 81/81 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
@@ -30,6 +30,7 @@
 | **Importance Engine** | `importance_service.score_importance` | Hybrid Heuristic & Signals | **PASS** | Score: 0.96 with 5 active signals |
 | **Redundancy Engine** | `redundancy_service.detect_and_filter_redundancy` | Near-Duplicate & Quality Selection | **PASS** | 1 redundancy event detected, kept Section 2 over Section 1 |
 | **Faithfulness Engine** | `faithfulness_service.check_faithfulness` | Grounding & Numerical Validation | **PASS** | Faithful: 1.00 score; Unfaithful: 2 unsupported claims detected |
+| **Contradiction Engine**| `contradiction_service.detect_contradictions` | Conflict & Antonym Detection | **PASS** | Clean: 0 conflicts; Conflict: 2 detected conflicts (numerical & antonym) |
 | **Error Handling** | `POST /summarize` | Unsupported format (`.exe`) | **PASS** | HTTP 400: Unsupported file format restriction |
 | **Error Handling** | `POST /summarize` | Empty file validation | **PASS** | HTTP 400: empty-file validation |
 | **Error Handling** | `POST /summarize` | Missing file payload | **PASS** | HTTP 422: FastAPI validation |
@@ -49,15 +50,33 @@
 | **Error Handling** | `POST /summarize-media` | Non-media extension | **PASS** | HTTP 400: media extension validation |
 | **Error Handling** | `POST /check-faithfulness` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
 | **Error Handling** | `POST /check-faithfulness` | Missing source text & file | **PASS** | HTTP 400: required source material validation |
+| **Error Handling** | `POST /check-contradictions` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
+| **Error Handling** | `POST /check-contradictions` | Missing source text & file | **PASS** | HTTP 400: required source material validation |
 | **Single Document** | `POST /summarize` | `document_a.txt` | **PASS** | HTTP 200: valid Groq-generated summary |
 | **Key Points** | `POST /key-points` | `keypoints_test.txt` | **PASS** | HTTP 200: requested key points returned |
 | **Multi-Document** | `POST /summarize-multiple` | `document_a.txt` + `document_b.txt` | **PASS** | HTTP 200: multi-document synthesis |
 | **Compare** | `POST /compare` | `compare_a.txt` vs `compare_b.txt` | **PASS** | HTTP 200: comparative report |
 | **Update Summary** | `POST /update-summary` | Previous summary vs current text | **PASS** | HTTP 200: delta analysis |
-| **Hierarchical** | `POST /summarize-hierarchical` | Map-Reduce with Importance, Redundancy & Faithfulness | **PASS** | HTTP 200: section synthesis, importance signals, redundancy filter, and faithfulness verification |
+| **Hierarchical** | `POST /summarize-hierarchical` | Map-Reduce with Importance, Redundancy, Faithfulness & Contradictions | **PASS** | HTTP 200: section synthesis, importance signals, redundancy filter, faithfulness & contradiction checks |
 | **Faithfulness Check**| `POST /check-faithfulness` | Direct Text-based Verification | **PASS** | HTTP 200: verified supported claims, score 1.00 |
 | **Faithfulness Check**| `POST /check-faithfulness` | File-based Document Verification | **PASS** | HTTP 200: verified claims against uploaded file |
+| **Contradiction Check**| `POST /check-contradictions` | Direct Text-based Conflict Detection | **PASS** | HTTP 200: verified status CLEAN, 0 conflicts |
+| **Contradiction Check**| `POST /check-contradictions` | File-based Document Conflict Detection | **PASS** | HTTP 200: verified status CLEAN against uploaded file |
 | **Media Pipeline** | `POST /summarize-media` | `voice_test.mp3` | **PASS** | HTTP 200: FFmpeg + Whisper + Groq pipeline |
+
+---
+
+### Dedicated Pytest Unit Test Suites (81/81 Passing)
+
+| Test Module | Coverage Area | Tests Passed | Status |
+| :--- | :--- | :---: | :---: |
+| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries, negative inputs, 10MB limit, 60k char guard, Groq API errors | 14 / 14 | **PASS** |
+| `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison, delta update detection, chunking headers, hierarchical enrichment, media, YouTube | 10 / 10 | **PASS** |
+| `tests/test_importance.py` | Scoring bounds, numerical/entity/definition signals, structural formatting, batch processing | 5 / 5 | **PASS** |
+| `tests/test_redundancy.py` | Exact/near duplicates, semantic preservation, quality selection, fallback filters | 9 / 9 | **PASS** |
+| `tests/test_faithfulness.py` | Entailment, numerical validation, date/entity checks, LLM fallback & error handling, hierarchical integration | 17 / 17 | **PASS** |
+| `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, schema bounds, LLM ambiguity resolution | 26 / 26 | **PASS** |
+| **Total Pytest Unit Tests** | | **81 / 81** | **PASS (100%)** |
 
 ---
 
@@ -155,36 +174,46 @@ An earlier institutional/college network produced failures associated with SSL i
 
 #### Docker Container Runtime
 
-The Docker configuration was initially statically audited and subsequently validated through actual runtime execution in previous sessions. However, in the current session, the environment lacked a running Docker engine.
+The Docker environment was verified running with Docker Desktop Linux containers through WSL2.
 
-Error encountered:
-`failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.`
+Verification execution:
+- `docker compose build`: Succeeded with 0 errors for both `ai-summarizer-backend` (Python 3.11-slim + FFmpeg) and `ai-summarizer-frontend` (Node 20 builder + Nginx Alpine).
+- `docker compose up -d`: Recreated and launched both services into `healthy` state.
+- `ai-summarizer-backend`: Container status `healthy`, mapped to `0.0.0.0:8000->8000/tcp`. `GET /health` returned HTTP 200 `{"status":"Running"}`.
+- `ai-summarizer-frontend`: Container status `healthy`, mapped to `0.0.0.0:3000->80/tcp`. `GET http://localhost:3000/` returned HTTP 200.
+- Persistent upload volume `ai-summarizer_backend_uploads` attached to `/app/uploads`.
 
-The following require re-verification once the Docker engine is available:
-
-- Docker image builds
-- Backend container startup
-- Frontend container startup
-- Backend health check
-- Frontend health check
-- Document summarization through Docker
-- Media summarization through Docker
-- Persistent upload volume
-- Container restart and recovery
-
-**Final status: PENDING (Environment Limitation).**
+**Final status: VERIFIED.**
 
 ---
 
 ## 6. Docker Runtime Verification
 
-Docker deployment verification is **PENDING**.
+Docker deployment verification is **VERIFIED (PASS)**.
 
-### Docker Environment
+### Docker Environment & Runtime Summary
 
 - **Docker Engine**: 29.8.0
 - **Docker Compose**: 5.5.1
-- **Status**: Docker engine is currently stopped/unavailable.
-- **Error**: `failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`
+- **WSL2 Kernel**: 6.18.33.2-microsoft-standard-WSL2
+- **Backend Service**: `ai-summarizer-backend` — Status: `Up (healthy)`, Port: `8000` -> Health check: PASS (HTTP 200 `{"status":"Running"}`)
+- **Frontend Service**: `ai-summarizer-frontend` — Status: `Up (healthy)`, Port: `3000` -> Health check: PASS (HTTP 200)
+- **Container Network**: `summarizer-net` (bridge)
+- **Persistent Volume**: `ai-summarizer_backend_uploads` mounted to `/app/uploads`
 
-Container validation will resume in the next phase when the environment supports Docker execution.
+---
+
+## 7. Defect Resolution Summary (Session Fixes)
+
+1. **`frontend/src/components/HierarchicalSummarizer.jsx`**:
+   - Defect: Contained CP1252 byte `0x95` causing `UnicodeDecodeError` in UTF-8 environments.
+   - Resolution: Replaced with valid UTF-8 bullet character `•`.
+2. **`tests/test_contradiction.py`**:
+   - Defect: Test functions declared below `if __name__ == "__main__":` block causing `NameError` during direct script execution.
+   - Resolution: Relocated all test definitions above main runner and cleaned duplicate declarations.
+3. **`backend/app/services/groq_service.py`**:
+   - Defect: `_call_groq_chat` did not accept or forward `response_format`, causing `TypeError` during JSON-mode LLM contradiction checks; logger string contained escaped `{{e}}`.
+   - Resolution: Added `response_format: dict = None` parameter, passed `**create_kwargs` to Groq API client, and corrected logger interpolation.
+4. **`frontend/src/services/api.js`**:
+   - Defect: Missing exported API client function `checkContradictions` corresponding to `POST /check-contradictions`.
+   - Resolution: Implemented and exported `checkContradictions({ file, sourceText, summaryText, useLlm })`.

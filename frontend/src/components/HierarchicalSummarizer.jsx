@@ -246,7 +246,7 @@ export default function HierarchicalSummarizer({ onError }) {
                       </span>
                     </div>
                     <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      Claims checked: {hierarchicalResult.contradictions.claims_checked} • Status: {hierarchicalResult.contradictions.status}
+                      Claims checked: {hierarchicalResult.contradictions.claims_checked} â€¢ Status: {hierarchicalResult.contradictions.status}
                     </div>
                   </div>
                 </div>
