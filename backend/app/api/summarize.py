@@ -33,6 +33,7 @@ from app.services.media_service import (
 from app.services.youtube_service import fetch_youtube_transcript
 
 import os
+import re
 import uuid
 
 
@@ -701,8 +702,10 @@ def key_points(
             # - Point
             # * Point
             #
-            cleaned_line = line.lstrip(
-                "0123456789.-) "
+            cleaned_line = re.sub(
+                r"^(?:\s*(?:\d+[.)]|[-*•])\s+)+",
+                "",
+                line
             ).strip()
 
             if cleaned_line:

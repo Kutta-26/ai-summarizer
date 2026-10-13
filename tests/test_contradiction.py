@@ -447,6 +447,16 @@ def test_bounded_call_behavior():
                     assert len(passed_claims) == 5
 
 
+def test_leading_number_bullet_contradictions_detected():
+    source = "12 regional data centers were deployed in 2025. Revenue grew by 18%."
+    summary = "- 50 regional data centers were deployed in 2025."
+    res = check_contradictions(source_text=source, summary_text=summary)
+    assert res["has_contradiction"] is True
+    assert res["status"] == "CONFLICT_DETECTED"
+    assert res["total_conflicts"] >= 1
+    assert any("50" in c["summary_value"] and "12" in c["source_value"] for c in res["conflicts"])
+
+
 if __name__ == "__main__":
     print("Running Contradiction Service Unit Tests...")
     test_no_contradiction()

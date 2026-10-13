@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 _base_dir = Path(__file__).resolve().parent.parent.parent
 _root_dir = _base_dir.parent
 
-load_dotenv()
-load_dotenv(_base_dir / ".env")
 load_dotenv(_root_dir / ".env")
+load_dotenv(_base_dir / ".env")
+load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")

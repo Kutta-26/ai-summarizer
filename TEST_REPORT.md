@@ -15,14 +15,14 @@
 ## 2. Automated Test Execution Matrix
 
 ### Overall Result: 44/44 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 81/81 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
+*(Plus 86/86 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
 | **System** | `GET /` | Root Welcome Endpoint | **PASS** | Returns `{"message": "Welcome to AI Summarizer API"}` with HTTP 200 |
 | **System** | `GET /health` | Service Heartbeat | **PASS** | Returns `{"status":"Running"}` with HTTP 200 |
 | **System** | `GET /docs` | Swagger UI API Documentation | **PASS** | Interactive OpenAPI documentation rendered successfully |
-| **System** | `GET /openapi.json` | OpenAPI Specification | **PASS** | Schema validated with 11 registered paths |
+| **System** | `GET /openapi.json` | OpenAPI Specification | **PASS** | Schema validated (`3.0.3`) with 12 registered paths and binary upload schemas |
 | **CORS** | `OPTIONS /summarize` | CORS Preflight Handling | **PASS** | `access-control-allow-origin` header verified |
 | **Observability** | `GET /health` | Latency Header (`X-Process-Time`) | **PASS** | Latency header verified |
 | **Document Parsers** | `file_service.extract_text` | PDF PyMuPDF Extraction | **PASS** | Successfully parsed sample PDF |
@@ -66,17 +66,17 @@
 
 ---
 
-### Dedicated Pytest Unit Test Suites (81/81 Passing)
+### Dedicated Pytest Unit Test Suites (86/86 Passing)
 
 | Test Module | Coverage Area | Tests Passed | Status |
 | :--- | :--- | :---: | :---: |
-| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries, negative inputs, 10MB limit, 60k char guard, Groq API errors | 14 / 14 | **PASS** |
+| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, Groq API errors | 17 / 17 | **PASS** |
 | `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison, delta update detection, chunking headers, hierarchical enrichment, media, YouTube | 10 / 10 | **PASS** |
 | `tests/test_importance.py` | Scoring bounds, numerical/entity/definition signals, structural formatting, batch processing | 5 / 5 | **PASS** |
 | `tests/test_redundancy.py` | Exact/near duplicates, semantic preservation, quality selection, fallback filters | 9 / 9 | **PASS** |
-| `tests/test_faithfulness.py` | Entailment, numerical validation, date/entity checks, LLM fallback & error handling, hierarchical integration | 17 / 17 | **PASS** |
-| `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, schema bounds, LLM ambiguity resolution | 26 / 26 | **PASS** |
-| **Total Pytest Unit Tests** | | **81 / 81** | **PASS (100%)** |
+| `tests/test_faithfulness.py` | Entailment, numerical validation, leading-number bullet claims, date/entity checks, LLM fallback & error handling, hierarchical integration | 18 / 18 | **PASS** |
+| `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, leading-number bullet conflicts, schema bounds, LLM ambiguity resolution | 27 / 27 | **PASS** |
+| **Total Pytest Unit Tests** | | **86 / 86** | **PASS (100%)** |
 
 ---
 
@@ -87,10 +87,10 @@ The React frontend was compiled successfully using Vite.
 - **Vite Version**: 5.4.21
 - **Modules Transformed**: 1,844
 - **Build Status**: 0 errors, 0 warnings
-- **Recorded Build Time**: approximately 1.64 seconds
+- **Recorded Build Time**: approximately 3.38 seconds
 - **`dist/index.html`**: 0.81 kB, gzip 0.45 kB
 - **CSS Bundle**: 17.24 kB, gzip 3.64 kB
-- **JavaScript Bundle**: 195.88 kB, gzip 57.80 kB
+- **JavaScript Bundle**: 206.01 kB, gzip 59.56 kB
 
 The production build completed successfully without compilation errors or warnings.
 
@@ -217,3 +217,18 @@ Docker deployment verification is **VERIFIED (PASS)**.
 4. **`frontend/src/services/api.js`**:
    - Defect: Missing exported API client function `checkContradictions` corresponding to `POST /check-contradictions`.
    - Resolution: Implemented and exported `checkContradictions({ file, sourceText, summaryText, useLlm })`.
+5. **`backend/app/services/groq_service.py` & `docker-compose.yml`**:
+   - Defect: Inside the Linux Docker container on institutional SSL-inspected networks, Groq API requests failed with `APIConnectionError: [SSL: CERTIFICATE_VERIFY_FAILED]` because `docker/certs/sophos-ca.pem` was neither mounted into the container nor loaded into the `httpx` SSL context.
+   - Resolution: Mounted `./docker/certs:/app/certs:ro` in `docker-compose.yml` and updated `get_groq_client()` to load custom CA bundles (`/app/certs/sophos-ca.pem`, `docker/certs/sophos-ca.pem`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`) when present.
+6. **`backend/app/services/file_service.py`**:
+   - Defect: `extract_pdf()` opened PDF files directly by path (`fitz.open(file_path)`). When a corrupted PDF failed inside `fitz.open.__init__`, PyMuPDF left an OS file handle open in the exception traceback on Windows, causing `os.remove(file_path)` in `finally:` to raise `PermissionError: [WinError 32]` (HTTP 500 instead of HTTP 400).
+   - Resolution: Read file bytes via `with open(file_path, "rb")` first and pass `stream=pdf_bytes, filetype="pdf"` to `fitz.open()`, guaranteeing immediate OS file-handle closure.
+7. **`backend/app/api/summarize.py`**:
+   - Defect: In `/key-points`, `line.lstrip("0123456789.-) ")` stripped leading numbers, years, and percentages from the content of extracted key points (e.g., `"1. 2025 revenue..."` -> `"revenue..."`) and did not strip `*` or `•` bullet markers.
+   - Resolution: Replaced character-set `lstrip` with regex prefix stripping `r"^(?:\s*(?:\d+[.)]|[-*•])\s+)+"`.
+8. **`backend/app/services/faithfulness_service.py`**:
+   - Defect: `clean_sentence_for_claim()` used `re.sub(r"^[\s*•\-\d\.\)\#]+", "", cleaned)`, stripping leading quantities/years from summary claims (e.g., `"- 99 regional data centers..."` -> `"regional data centers..."`), which prevented both faithfulness and contradiction engines from detecting numerical/percentage conflicts at the start of a claim.
+   - Resolution: Updated `clean_sentence_for_claim()` to strip only markdown header/list prefixes (`r"^(?:\s*(?:#+\s+|[-*•]\s+|\d+[.)]\s+))+"`) and normalize Unicode narrow no-break spaces/hyphens and bold markers.
+9. **`backend/app/core/config.py` & `backend/main.py`**:
+   - Defect: `config.py` loaded `backend/.env` before project root `.env`, allowing a stale `backend/.env` key to shadow the valid root `.env` key; `custom_openapi()` in `main.py` omitted `/check-faithfulness` and `/check-contradictions` from OpenAPI 3.0.3 binary upload schema normalization.
+   - Resolution: Prioritized `_root_dir / ".env"` in `config.py` and added `/check-faithfulness` and `/check-contradictions` (plus `anyOf` cleanup) to `_enforce_binary_field()` in `main.py`.

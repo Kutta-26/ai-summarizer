@@ -222,6 +222,7 @@ def custom_openapi():
             properties[field_name] = {}
         prop = properties[field_name]
         prop.pop("contentMediaType", None)
+        prop.pop("anyOf", None)
         if is_array:
             prop["type"] = "array"
             prop["items"] = {"type": "string", "format": "binary"}
@@ -289,6 +290,24 @@ def custom_openapi():
         "Body_summarize_media_summarize_media_post",
         "file",
         description="Audio or video file (.mp3, .wav, .m4a, .mp4, .mkv, .mov, .webm, .avi, .flac, .ogg, max 10 MB)"
+    )
+
+    # ========================================================
+    # 7. /check-faithfulness
+    # ========================================================
+    _enforce_binary_field(
+        "Body_check_faithfulness_endpoint_check_faithfulness_post",
+        "file",
+        description="Source document file (TXT, PDF, DOCX) to verify against (optional if 'source_text' is provided)"
+    )
+
+    # ========================================================
+    # 8. /check-contradictions
+    # ========================================================
+    _enforce_binary_field(
+        "Body_check_contradictions_endpoint_check_contradictions_post",
+        "file",
+        description="Source document file (TXT, PDF, DOCX) to verify against (optional if 'source_text' is provided)"
     )
 
     # ========================================================

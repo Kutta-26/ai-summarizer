@@ -127,13 +127,15 @@ def match_date_in_text(date_str: str, text: str) -> bool:
 
 def clean_sentence_for_claim(text: str) -> str:
     """
-    Strips leading markdown list markers, numbering, table pipes, and excess whitespace.
+    Strips leading markdown list markers, numbering, table pipes, and excess whitespace
+    while preserving leading numbers, years, and percentages that belong to the claim.
     """
-    cleaned = text.strip()
+    cleaned = text.replace("\u202f", " ").replace("\u00a0", " ").replace("\u2011", "-").strip()
     if cleaned.startswith("|") and cleaned.endswith("|"):
         cells = [c.strip() for c in cleaned.split("|") if c.strip() and not set(c.strip()).issubset({"-", ":"})]
         cleaned = " — ".join(cells)
-    cleaned = re.sub(r"^[\s*•\-\d\.\)\#]+", "", cleaned).strip()
+    cleaned = re.sub(r"^(?:\s*(?:#+\s+|[-*•]\s+|\d+[.)]\s+))+", "", cleaned).strip()
+    cleaned = cleaned.replace("**", "").strip()
     return cleaned
 
 

@@ -289,6 +289,19 @@ def test_backward_compatibility():
     assert response_modern.faithfulness.status == "HIGH"
 
 
+# 18. Regression: Leading numbers/percentages in bullet claims preserved
+def test_leading_number_bullet_claims_preserved():
+    source = "In 2025, 12 regional data centers were deployed with 24% operating margins."
+    summary = "- 99 regional data centers were deployed in 2025.\n- 85% operating margins were achieved."
+    res = check_faithfulness(source_text=source, summary_text=summary)
+    assert res["unsupported_claims"] == 2
+    assert res["supported_claims"] == 0
+    assert res["status"] == "LOW"
+    extracted = [c["claim"] for c in res["claims"]]
+    assert "99 regional data centers were deployed in 2025." in extracted
+    assert "85% operating margins were achieved." in extracted
+
+
 if __name__ == "__main__":
     print("Running Faithfulness Service Unit Tests (17 scenarios)...")
     test_empty_source()

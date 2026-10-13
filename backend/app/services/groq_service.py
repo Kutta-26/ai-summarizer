@@ -56,6 +56,19 @@ def get_groq_client() -> Groq:
         try:
             # Provide an optimized HTTP client with system SSL context and connection pooling
             ssl_ctx = ssl.create_default_context()
+            repo_root = Path(__file__).resolve().parent.parent.parent.parent
+            candidate_certs = [
+                os.getenv("SSL_CERT_FILE"),
+                os.getenv("REQUESTS_CA_BUNDLE"),
+                "/app/certs/sophos-ca.pem",
+                str(repo_root / "docker" / "certs" / "sophos-ca.pem"),
+            ]
+            for cert_path in candidate_certs:
+                if cert_path and os.path.isfile(cert_path):
+                    try:
+                        ssl_ctx.load_verify_locations(cafile=cert_path)
+                    except Exception:
+                        pass
             http_client = httpx.Client(
                 verify=ssl_ctx,
                 timeout=REQUEST_TIMEOUT,

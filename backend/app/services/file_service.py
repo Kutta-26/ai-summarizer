@@ -55,9 +55,12 @@ def extract_txt(file_path: str) -> str:
 def extract_pdf(file_path: str) -> str:
     """
     Extract text from a PDF file using PyMuPDF (with safe context manager).
+    Reads into memory stream first so OS file handles are never left open on Windows if parsing fails.
     """
     try:
-        with fitz.open(file_path) as document:
+        with open(file_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
             if document.is_encrypted:
                 raise ValueError(
                     "The uploaded PDF is password-protected or encrypted. "

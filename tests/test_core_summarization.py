@@ -272,3 +272,68 @@ def test_api_empty_response():
         )
         assert res.status_code == 500
         assert "empty response" in res.json().get("detail", "").lower()
+
+
+# ============================================================
+# 5. REGRESSION TESTS FOR STABILIZATION FIXES
+# ============================================================
+
+def test_key_points_preserves_leading_numbers_and_strips_bullets():
+    """Verify /key-points strips list markers (1., 2), -, *, •) without stripping leading numbers/years/percentages."""
+    raw_llm_points = (
+        "1. 2025 revenue reached $42.5M\n"
+        "2) 18% growth in Q3\n"
+        "- 12 regional data centers deployed\n"
+        "* 99.9% uptime achieved\n"
+        "• 3.2M cloud infrastructure investment"
+    )
+    with patch("app.services.groq_service._call_groq_chat", return_value=raw_llm_points):
+        res = client.post(
+            "/key-points",
+            files={"file": ("test.txt", SAMPLE_TEXT.encode("utf-8"), "text/plain")},
+            data={"number_of_points": 5}
+        )
+        assert res.status_code == 200
+        points = res.json()["key_points"]
+        assert points == [
+            "2025 revenue reached $42.5M",
+            "18% growth in Q3",
+            "12 regional data centers deployed",
+            "99.9% uptime achieved",
+            "3.2M cloud infrastructure investment",
+        ]
+
+
+def test_corrupted_pdf_returns_400_and_cleans_up_temp_file():
+    """Verify corrupted PDF upload returns 400 cleanly without Windows file-lock PermissionError."""
+    res = client.post(
+        "/summarize",
+        files={"file": ("corrupt.pdf", b"not a valid pdf header", "application/pdf")},
+        data={"length": "short", "format": "paragraph"}
+    )
+    assert res.status_code == 400
+    assert "failed to extract text from pdf" in res.json().get("detail", "").lower()
+
+
+def test_openapi_303_binary_upload_schemas():
+    """Verify all file-upload endpoints use OpenAPI 3.0.3 string+binary format without anyOf."""
+    res = client.get("/openapi.json")
+    assert res.status_code == 200
+    spec = res.json()
+    assert spec["openapi"] == "3.0.3"
+    schemas = spec["components"]["schemas"]
+    single_file_schemas = [
+        "Body_summarize_summarize_post",
+        "Body_key_points_key_points_post",
+        "Body_summarize_hierarchical_endpoint_summarize_hierarchical_post",
+        "Body_summarize_media_summarize_media_post",
+        "Body_check_faithfulness_endpoint_check_faithfulness_post",
+        "Body_check_contradictions_endpoint_check_contradictions_post",
+    ]
+    for schema_name in single_file_schemas:
+        prop = schemas[schema_name]["properties"]["file"]
+        assert prop.get("type") == "string"
+        assert prop.get("format") == "binary"
+        assert "anyOf" not in prop
+        assert "contentMediaType" not in prop
+
