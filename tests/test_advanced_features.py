@@ -338,6 +338,18 @@ def test_summarize_media_endpoint_mocked():
         assert "Keynote summary" in data["summary"]
 
 
+def test_summarize_media_no_speech_detected_returns_400():
+    """Verify /summarize-media returns HTTP 400 when Whisper detects no speech."""
+    with patch("app.api.summarize.transcribe_media", side_effect=ValueError("Whisper did not detect any speech in the media file.")):
+        res = client.post(
+            "/summarize-media",
+            files={"file": ("silent.wav", b"dummy silent wav", "audio/wav")},
+            data={"length": "short", "format": "paragraph"}
+        )
+        assert res.status_code == 400
+        assert "Whisper did not detect any speech" in res.json()["detail"]
+
+
 # ============================================================
 # 6. YOUTUBE WORKFLOW (VIDEO ID EXTRACTION & MOCKED RETRIEVAL)
 # ============================================================

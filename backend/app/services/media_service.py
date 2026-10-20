@@ -281,7 +281,7 @@ def transcribe_audio(audio_path: str) -> str:
 
         if not transcript:
 
-            raise RuntimeError(
+            raise ValueError(
                 "Whisper did not detect any speech "
                 "in the media file."
             )
@@ -293,6 +293,8 @@ def transcribe_audio(audio_path: str) -> str:
         )
         return transcript
 
+    except ValueError:
+        raise
     except Exception as e:
 
         raise RuntimeError(

@@ -14,8 +14,8 @@
 
 ## 2. Automated Test Execution Matrix
 
-### Overall Result: 48/48 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 92/92 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
+### Overall Result: 49/49 Automated Regression Tests Passing — 100% Success Rate
+*(Plus 93/93 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
@@ -50,6 +50,7 @@
 | **Context Safety** | `POST /update-summary` | Text >60k characters | **PASS** | HTTP 400: delta summary context safety limit rejection |
 | **Error Handling** | `POST /summarize-hierarchical` | Invalid chunk-size boundary | **PASS** | HTTP 400: chunk-size validation |
 | **Error Handling** | `POST /summarize-media` | Non-media extension | **PASS** | HTTP 400: media extension validation |
+| **Error Handling** | `POST /summarize-media` | Silent media without speech | **PASS** | HTTP 400: Whisper no-speech detection validation |
 | **Error Handling** | `POST /check-faithfulness` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
 | **Error Handling** | `POST /check-faithfulness` | Missing source text & file | **PASS** | HTTP 400: required source material validation |
 | **Error Handling** | `POST /check-contradictions` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
@@ -70,17 +71,17 @@
 
 ---
 
-### Dedicated Pytest Unit Test Suites (92/92 Passing)
+### Dedicated Pytest Unit Test Suites (93/93 Passing)
 
 | Test Module | Coverage Area | Tests Passed | Status |
 | :--- | :--- | :---: | :---: |
 | `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, Groq API errors | 17 / 17 | **PASS** |
-| `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison identical/context guards, delta update detection identical/context guards, chunking headers, hierarchical enrichment, media, YouTube | 16 / 16 | **PASS** |
+| `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison identical/context guards, delta update detection identical/context guards, chunking headers, hierarchical enrichment, media speech/silence guards, YouTube | 17 / 17 | **PASS** |
 | `tests/test_importance.py` | Scoring bounds, numerical/entity/definition signals, structural formatting, batch processing | 5 / 5 | **PASS** |
 | `tests/test_redundancy.py` | Exact/near duplicates, semantic preservation, quality selection, fallback filters | 9 / 9 | **PASS** |
 | `tests/test_faithfulness.py` | Entailment, numerical validation, leading-number bullet claims, date/entity checks, LLM fallback & error handling, hierarchical integration | 18 / 18 | **PASS** |
 | `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, leading-number bullet conflicts, schema bounds, LLM ambiguity resolution | 27 / 27 | **PASS** |
-| **Total Pytest Unit Tests** | | **92 / 92** | **PASS (100%)** |
+| **Total Pytest Unit Tests** | | **93 / 93** | **PASS (100%)** |
 
 ---
 
@@ -247,3 +248,6 @@ Docker deployment verification is **VERIFIED (PASS)**.
 12. **`frontend/src/components/SummaryResult.jsx` & `frontend/src/index.css`**:
     - Defect: `SummaryResult` rendered markdown headers (`# `, `## `) and delta/comparison section titles (`New Information:`, `Similarities:`, etc.) as plain paragraph text, making analytical reports hard to scan.
     - Resolution: Added header parser and pill badges for structured section titles with `.summary-section-heading` and `.section-title-pill` styling in `index.css`.
+13. **`backend/app/services/media_service.py`**:
+    - Defect: When an uploaded media file contained no audible speech or was silent (e.g., `test.wav`), `transcribe_audio` raised an uncaught `RuntimeError("Whisper did not detect any speech in the media file.")`, which propagated to FastAPI as an internal server error (HTTP 500) rather than a client input error.
+    - Resolution: Changed exception type to `ValueError` and ensured `except ValueError: raise` in `transcribe_audio`, enabling the endpoint exception handler to catch it cleanly and return HTTP 400 Bad Request with `"Whisper did not detect any speech in the media file."`. Added unit test in `tests/test_advanced_features.py` and regression test in `tests/test_suite.py`.

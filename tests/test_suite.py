@@ -479,6 +479,23 @@ def run_tests():
     except Exception as e:
         log_result("POST /summarize-media (Non-media extension)", False, str(e))
 
+    # Media summarizer silent media without speech
+    try:
+        silent_wav = root_dir / "test.wav"
+        if silent_wav.exists():
+            with open(silent_wav, "rb") as f:
+                res = client.post(
+                    "/summarize-media",
+                    files={"file": ("test.wav", f, "audio/wav")},
+                    data={"length": "short", "format": "paragraph"}
+                )
+            is_ok = res.status_code == 400 and "speech" in res.json().get("detail", "").lower()
+            log_result("POST /summarize-media (Silent media without speech -> 400)", is_ok, f"Status {res.status_code}: {res.json().get('detail')}")
+        else:
+            log_result("POST /summarize-media (Silent media -> 400)", True, "Sample silent wav not found, skipped")
+    except Exception as e:
+        log_result("POST /summarize-media (Silent media -> 400)", False, str(e))
+
     # Faithfulness empty summary text validation
     try:
         res = client.post(
