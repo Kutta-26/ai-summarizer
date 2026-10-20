@@ -738,6 +738,33 @@ body {
   margin-bottom: 1rem;
 }
 
+.summary-section-heading {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #93c5fd;
+  margin-top: 1.5rem;
+  margin-bottom: 0.65rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.summary-section-heading:first-child {
+  margin-top: 0.25rem;
+}
+
+.section-title-pill {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background-color: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 6px;
+  color: #93c5fd;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .summary-list {
   list-style: disc;
   margin-left: 1.5rem;

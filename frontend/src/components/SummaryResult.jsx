@@ -110,6 +110,27 @@ export default function SummaryResult({ summary, title = "Generated Summary", me
               );
             }
 
+            // Render markdown headings (# Header, ## Header, ### Header)
+            if (/^#{1,6}\s+/.test(trimmed)) {
+              const cleanHeading = trimmed.replace(/^#{1,6}\s+/, '').trim();
+              return (
+                <h4 key={pIdx} className="summary-section-heading">
+                  <span className="section-title-pill">{cleanHeading}</span>
+                </h4>
+              );
+            }
+
+            // Render structured section titles (delta update and comparison sections)
+            const sectionTitleMatch = trimmed.match(/^(\*\*)?(New Information|Changed Information|Removed Information|Unchanged Information|Overall Update|Document A Summary|Document B Summary|Similarities|Differences|Unique Information in Document A|Unique Information in Document B|Overall Comparison)(\*\*)?:?$/i);
+            if (sectionTitleMatch) {
+              const cleanTitle = sectionTitleMatch[2];
+              return (
+                <h4 key={pIdx} className="summary-section-heading">
+                  <span className="section-title-pill">{cleanTitle}</span>
+                </h4>
+              );
+            }
+
             // Render bullet points
             if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || /^\d+\.\s/.test(trimmed)) {
               const lines = trimmed.split('\n');

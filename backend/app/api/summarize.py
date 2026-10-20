@@ -779,7 +779,8 @@ def key_points(
         "   - **Key Differences**: Divergent conclusions, conflicting metrics, and contrasting stances.\n"
         "   - **Unique Details**: Facts or data points present in only one document.\n\n"
         "### Supported Formats:\n"
-        "- Both `file_a` and `file_b` accept `.txt`, `.pdf`, and `.docx` up to 10 MB each."
+        "- Both `file_a` and `file_b` accept `.txt`, `.pdf`, and `.docx` up to 10 MB each.\n"
+        "- Context safety guard: Each document must not exceed 60,000 characters."
     ),
     response_description="Structured comparative analysis report highlighting commonalities and differences",
     tags=["Analysis & Extraction"],
@@ -1056,7 +1057,9 @@ def summarize_media(
         "   - **New Information**: Newly introduced facts, findings, and statements.\n"
         "   - **Changed Information**: Contradictions, updated data points, and changed timelines.\n"
         "   - **Removed Information**: Concepts in the previous summary that no longer appear.\n"
-        "   - **Unchanged Information**: Key aspects that remain consistent."
+        "   - **Unchanged Information**: Key aspects that remain consistent.\n\n"
+        "### Constraints:\n"
+        "- `previous_summary` and `current_text` must each not exceed 60,000 characters."
     ),
     response_description="Categorized delta summary highlighting additions, modifications, and removals",
     tags=["Analysis & Extraction"],

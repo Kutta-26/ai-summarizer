@@ -510,6 +510,33 @@ def compare_documents(
         )
 
     # --------------------------------------------------------
+    # Validate Document Context Safety Limits
+    # --------------------------------------------------------
+
+    if len(text_a) > 60000 or len(text_b) > 60000:
+        raise ValueError(
+            "Document content exceeds 60,000 characters (~15,000 words) for side-by-side comparison. "
+            "Please provide documents within the context limit."
+        )
+
+    # --------------------------------------------------------
+    # Deterministic Identical Document Handling
+    # --------------------------------------------------------
+
+    if text_a.strip() == text_b.strip():
+        return (
+            f"Document A Summary:\nOverview of {document_a_name}.\n\n"
+            f"Document B Summary:\nIdentical to {document_a_name}.\n\n"
+            "Similarities:\n"
+            f"- Both {document_a_name} and {document_b_name} have completely identical text, structure, and factual content.\n\n"
+            "Differences:\nNone identified.\n\n"
+            "Unique Information in Document A:\nNone identified.\n\n"
+            "Unique Information in Document B:\nNone identified.\n\n"
+            "Overall Comparison:\n"
+            "Both documents are completely identical with no conflicting metrics, additions, or omissions."
+        )
+
+    # --------------------------------------------------------
     # Build comparison prompt
     # --------------------------------------------------------
 
@@ -603,6 +630,8 @@ IMPORTANT RULES
 - Do not assume missing information.
 - Do not make unsupported claims.
 - Do not repeat the same information unnecessarily.
+- Clearly highlight any direct factual contradictions or conflicting data points (such as differing dates, numerical figures, percentages, quantities, or opposing stances between Document A and Document B) under 'Differences' by explicitly stating Document A's claim versus Document B's claim.
+- Paraphrased or reworded sentences with the same underlying meaning must be classified under 'Similarities', not 'Differences'.
 - Focus on meaningful similarities and differences.
 - Keep the comparison clear and professional.
 - Preserve the meaning of both documents.
@@ -663,6 +692,31 @@ def update_summary(
     if not current_text or not current_text.strip():
         raise ValueError(
             "Current document cannot be empty."
+        )
+
+    # --------------------------------------------------------
+    # Validate Context Safety Limits
+    # --------------------------------------------------------
+
+    if len(previous_summary) > 60000 or len(current_text) > 60000:
+        raise ValueError(
+            "Input content exceeds 60,000 characters (~15,000 words) for delta summarization. "
+            "Please provide summaries and updates within the context limit."
+        )
+
+    # --------------------------------------------------------
+    # Deterministic Identical Content Handling
+    # --------------------------------------------------------
+
+    if previous_summary.strip() == current_text.strip():
+        return (
+            "New Information:\nNone identified.\n\n"
+            "Changed Information:\nNone identified.\n\n"
+            "Removed Information:\nNone identified.\n\n"
+            "Unchanged Information:\n"
+            "- All facts, metrics, and statements remain identical to the previous summary.\n\n"
+            "Overall Update:\n"
+            "No updates or modifications detected. The current document content is identical to the baseline summary."
         )
 
     # --------------------------------------------------------
@@ -738,10 +792,9 @@ IMPORTANT RULES
 - Compare only the information provided.
 - Do not invent information.
 - Do not assume information that is not present.
-- Do not treat rewording as a change unless the meaning
-  actually changed.
-- Clearly distinguish genuinely new information from
-  information already present in the previous summary.
+- Do not treat rewording, paraphrase, or reordered sentences as a change if the underlying meaning remains the same. Report unchanged meaning under 'Unchanged Information'.
+- For updated numerical values, dates, percentages, metrics, or currency amounts, clearly highlight both the previous value and the updated value under 'Changed Information' (e.g. 'Revenue grew from 10% to 15%').
+- Clearly distinguish genuinely new information from information already present in the previous summary.
 - If a section has no meaningful items, write:
   "None identified."
 - Keep the result clear and professional.

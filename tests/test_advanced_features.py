@@ -91,6 +91,62 @@ def test_document_comparison():
     prompt = captured_messages[0]
     assert "DOCUMENT A" in prompt
     assert "DOCUMENT B" in prompt
+    assert "factual contradictions" in prompt or "Differences" in prompt
+
+
+def test_document_comparison_identical_documents():
+    """Verify comparing identical documents returns deterministic output without LLM calls."""
+    with patch("app.services.groq_service._call_groq_chat") as mock_chat:
+        res = client.post(
+            "/compare",
+            files={
+                "file_a": ("doc.txt", b"Exact same operational text across both.", "text/plain"),
+                "file_b": ("doc.txt", b"Exact same operational text across both.", "text/plain")
+            }
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert "summary" in data
+        assert "identical" in data["summary"].lower()
+        assert "Differences:\nNone identified." in data["summary"]
+        assert not mock_chat.called, "Should not invoke LLM when documents are completely identical"
+
+
+def test_document_comparison_context_limit_guard():
+    """Verify comparing documents exceeding 60,000 characters returns 400."""
+    res = client.post(
+        "/compare",
+        files={
+            "file_a": ("huge.txt", ("A" * 65000).encode("utf-8"), "text/plain"),
+            "file_b": ("normal.txt", b"Normal length document", "text/plain")
+        }
+    )
+    assert res.status_code == 400
+    assert "60,000 characters" in res.json()["detail"]
+
+
+def test_document_comparison_empty_and_whitespace():
+    """Verify comparing empty or whitespace-only files returns 400."""
+    # 0-byte file
+    res1 = client.post(
+        "/compare",
+        files={
+            "file_a": ("empty.txt", b"", "text/plain"),
+            "file_b": ("valid.txt", b"Valid content", "text/plain")
+        }
+    )
+    assert res1.status_code == 400
+
+    # Whitespace only file
+    res2 = client.post(
+        "/compare",
+        files={
+            "file_a": ("spaces.txt", b"   \n\t  ", "text/plain"),
+            "file_b": ("valid.txt", b"Valid content", "text/plain")
+        }
+    )
+    assert res2.status_code == 400
+    assert "No readable text" in res2.json()["detail"]
 
 
 # ============================================================
@@ -122,6 +178,61 @@ def test_update_summary_delta_detection():
         data = res.json()
         assert "summary" in data
         assert "New Information" in data["summary"]
+
+    prompt = captured_messages[0]
+    assert "PREVIOUS SUMMARY" in prompt
+    assert "CURRENT DOCUMENT" in prompt
+    assert "Changed Information" in prompt
+
+
+def test_update_summary_identical_content():
+    """Verify identical previous summary and current document returns deterministic output without LLM."""
+    with patch("app.services.groq_service._call_groq_chat") as mock_chat:
+        res = client.post(
+            "/update-summary",
+            data={
+                "previous_summary": "Q3 profit was $5 million with 12% margin.",
+                "current_text": "Q3 profit was $5 million with 12% margin."
+            }
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert "summary" in data
+        assert "New Information:\nNone identified." in data["summary"]
+        assert "Changed Information:\nNone identified." in data["summary"]
+        assert "Removed Information:\nNone identified." in data["summary"]
+        assert "identical" in data["summary"].lower()
+        assert not mock_chat.called, "Should not invoke LLM when summary and content are identical"
+
+
+def test_update_summary_context_limit_guard():
+    """Verify update-summary returns 400 when input text exceeds 60,000 characters."""
+    res = client.post(
+        "/update-summary",
+        data={
+            "previous_summary": "Baseline summary",
+            "current_text": "X" * 65000
+        }
+    )
+    assert res.status_code == 400
+    assert "60,000 characters" in res.json()["detail"]
+
+
+def test_update_summary_validation_rejections():
+    """Verify update-summary rejects empty, whitespace, and missing fields."""
+    # Whitespace previous
+    r1 = client.post("/update-summary", data={"previous_summary": "   ", "current_text": "Valid"})
+    assert r1.status_code == 400
+    assert "Previous summary cannot be empty" in r1.json()["detail"]
+
+    # Whitespace current
+    r2 = client.post("/update-summary", data={"previous_summary": "Valid", "current_text": "   "})
+    assert r2.status_code == 400
+    assert "Current document cannot be empty" in r2.json()["detail"]
+
+    # Missing field
+    r3 = client.post("/update-summary", data={"current_text": "Valid"})
+    assert r3.status_code == 422
 
 
 # ============================================================

@@ -14,8 +14,8 @@
 
 ## 2. Automated Test Execution Matrix
 
-### Overall Result: 44/44 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 86/86 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
+### Overall Result: 48/48 Automated Regression Tests Passing — 100% Success Rate
+*(Plus 92/92 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
@@ -46,6 +46,8 @@
 | **Error Handling** | `POST /summarize-youtube` | Invalid/non-YouTube URL | **PASS** | HTTP 400: video ID validation |
 | **Error Handling** | `POST /summarize-youtube` | Whitespace-only URL | **PASS** | HTTP 400: empty URL validation |
 | **Error Handling** | `POST /update-summary` | Whitespace input | **PASS** | HTTP 400: previous summary validation |
+| **Context Safety** | `POST /compare` | Document >60k characters | **PASS** | HTTP 400: comparison context safety limit rejection |
+| **Context Safety** | `POST /update-summary` | Text >60k characters | **PASS** | HTTP 400: delta summary context safety limit rejection |
 | **Error Handling** | `POST /summarize-hierarchical` | Invalid chunk-size boundary | **PASS** | HTTP 400: chunk-size validation |
 | **Error Handling** | `POST /summarize-media` | Non-media extension | **PASS** | HTTP 400: media extension validation |
 | **Error Handling** | `POST /check-faithfulness` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
@@ -56,7 +58,9 @@
 | **Key Points** | `POST /key-points` | `keypoints_test.txt` | **PASS** | HTTP 200: requested key points returned |
 | **Multi-Document** | `POST /summarize-multiple` | `document_a.txt` + `document_b.txt` | **PASS** | HTTP 200: multi-document synthesis |
 | **Compare** | `POST /compare` | `compare_a.txt` vs `compare_b.txt` | **PASS** | HTTP 200: comparative report |
+| **Compare** | `POST /compare` | Identical documents fast-path | **PASS** | HTTP 200: deterministic instant comparison without LLM tokens |
 | **Update Summary** | `POST /update-summary` | Previous summary vs current text | **PASS** | HTTP 200: delta analysis |
+| **Update Summary** | `POST /update-summary` | Identical content fast-path | **PASS** | HTTP 200: deterministic instant delta without LLM tokens |
 | **Hierarchical** | `POST /summarize-hierarchical` | Map-Reduce with Importance, Redundancy, Faithfulness & Contradictions | **PASS** | HTTP 200: section synthesis, importance signals, redundancy filter, faithfulness & contradiction checks |
 | **Faithfulness Check**| `POST /check-faithfulness` | Direct Text-based Verification | **PASS** | HTTP 200: verified supported claims, score 1.00 |
 | **Faithfulness Check**| `POST /check-faithfulness` | File-based Document Verification | **PASS** | HTTP 200: verified claims against uploaded file |
@@ -66,17 +70,17 @@
 
 ---
 
-### Dedicated Pytest Unit Test Suites (86/86 Passing)
+### Dedicated Pytest Unit Test Suites (92/92 Passing)
 
 | Test Module | Coverage Area | Tests Passed | Status |
 | :--- | :--- | :---: | :---: |
 | `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, Groq API errors | 17 / 17 | **PASS** |
-| `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison, delta update detection, chunking headers, hierarchical enrichment, media, YouTube | 10 / 10 | **PASS** |
+| `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison identical/context guards, delta update detection identical/context guards, chunking headers, hierarchical enrichment, media, YouTube | 16 / 16 | **PASS** |
 | `tests/test_importance.py` | Scoring bounds, numerical/entity/definition signals, structural formatting, batch processing | 5 / 5 | **PASS** |
 | `tests/test_redundancy.py` | Exact/near duplicates, semantic preservation, quality selection, fallback filters | 9 / 9 | **PASS** |
 | `tests/test_faithfulness.py` | Entailment, numerical validation, leading-number bullet claims, date/entity checks, LLM fallback & error handling, hierarchical integration | 18 / 18 | **PASS** |
 | `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, leading-number bullet conflicts, schema bounds, LLM ambiguity resolution | 27 / 27 | **PASS** |
-| **Total Pytest Unit Tests** | | **86 / 86** | **PASS (100%)** |
+| **Total Pytest Unit Tests** | | **92 / 92** | **PASS (100%)** |
 
 ---
 
@@ -232,3 +236,14 @@ Docker deployment verification is **VERIFIED (PASS)**.
 9. **`backend/app/core/config.py` & `backend/main.py`**:
    - Defect: `config.py` loaded `backend/.env` before project root `.env`, allowing a stale `backend/.env` key to shadow the valid root `.env` key; `custom_openapi()` in `main.py` omitted `/check-faithfulness` and `/check-contradictions` from OpenAPI 3.0.3 binary upload schema normalization.
    - Resolution: Prioritized `_root_dir / ".env"` in `config.py` and added `/check-faithfulness` and `/check-contradictions` (plus `anyOf` cleanup) to `_enforce_binary_field()` in `main.py`.
+10. **`backend/app/services/groq_service.py` & `backend/app/api/summarize.py`**:
+    - Defect: `/compare` and `/update-summary` lacked context safety character guards (unlike `/summarize`), allowing oversized inputs (>60,000 characters) to be sent directly to Groq, triggering rate limits/TPM exhaustion (`Error code: 413`) and unhandled HTTP 500 errors.
+    - Resolution: Added explicit context safety validations (`len > 60000`) raising `ValueError` (mapped to HTTP 400), updated endpoint OpenAPI documentation with context constraints, and added regression tests.
+11. **`backend/app/services/groq_service.py`**:
+    - Defect: Comparing identical documents or requesting an update summary with identical text invoked external LLM calls, incurring unnecessary latency, token consumption, and risk of slight non-deterministic paraphrasing.
+    - Resolution: Implemented deterministic fast-paths for identical content in both `compare_documents()` and `update_summary()`, instantly returning structured zero-difference reports without LLM invocations.
+    - Defect: Delta and comparison prompts did not explicitly enforce contrast format for conflicting numerical metrics, percentages, dates, and currency amounts or guide classification of semantic paraphrasing.
+    - Resolution: Enhanced prompt rules in `compare_documents` to explicitly highlight factual contradictions under 'Differences' and semantic equivalence under 'Similarities'; enhanced `update_summary` prompt to contrast old vs. new values for numerical/date changes and categorize paraphrasing under 'Unchanged Information'.
+12. **`frontend/src/components/SummaryResult.jsx` & `frontend/src/index.css`**:
+    - Defect: `SummaryResult` rendered markdown headers (`# `, `## `) and delta/comparison section titles (`New Information:`, `Similarities:`, etc.) as plain paragraph text, making analytical reports hard to scan.
+    - Resolution: Added header parser and pill badges for structured section titles with `.summary-section-heading` and `.section-title-pill` styling in `index.css`.

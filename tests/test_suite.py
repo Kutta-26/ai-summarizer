@@ -430,6 +430,32 @@ def run_tests():
     except Exception as e:
         log_result("POST /update-summary (Whitespace inputs)", False, str(e))
 
+    # Compare document oversized context safety limit (>60k chars)
+    try:
+        res = client.post(
+            "/compare",
+            files={
+                "file_a": ("huge.txt", ("A" * 65000).encode("utf-8"), "text/plain"),
+                "file_b": ("normal.txt", b"Normal document content", "text/plain")
+            }
+        )
+        log_result("POST /compare (Document >60k chars guard -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /compare (Oversized guard)", False, str(e))
+
+    # Update summary oversized context safety limit (>60k chars)
+    try:
+        res = client.post(
+            "/update-summary",
+            data={
+                "previous_summary": "Baseline overview",
+                "current_text": "C" * 65000
+            }
+        )
+        log_result("POST /update-summary (Text >60k chars guard -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /update-summary (Oversized guard)", False, str(e))
+
     # Hierarchical summarizer chunk_size boundary (< 500)
     try:
         doc_a_path = root_dir / "document_a.txt"
@@ -599,6 +625,20 @@ def run_tests():
     except Exception as e:
         log_result(f"POST /compare (Document Comparison {mode_label})", False, str(e))
 
+    # POST /compare (Identical Documents Fast-Path)
+    try:
+        res = client.post(
+            "/compare",
+            files={
+                "file_a": ("same.txt", b"Identical document content across both.", "text/plain"),
+                "file_b": ("same.txt", b"Identical document content across both.", "text/plain")
+            }
+        )
+        is_ok = res.status_code == 200 and "identical" in res.json().get("summary", "").lower() and "Differences:\nNone identified." in res.json().get("summary", "")
+        log_result("POST /compare (Identical Documents Fast-Path)", is_ok, f"Status {res.status_code}")
+    except Exception as e:
+        log_result("POST /compare (Identical Documents Fast-Path)", False, str(e))
+
     # POST /update-summary
     try:
         prev_sum = "Company Q1 reported 10% growth in revenue and launched Product X."
@@ -613,6 +653,22 @@ def run_tests():
             time.sleep(0.5)
     except Exception as e:
         log_result(f"POST /update-summary (Delta Change Detection {mode_label})", False, str(e))
+
+    # POST /update-summary (Identical Content Fast-Path)
+    try:
+        same_content = "Annual subscription is $120 billed annually."
+        res = client.post(
+            "/update-summary",
+            data={"previous_summary": same_content, "current_text": same_content}
+        )
+        is_ok = (
+            res.status_code == 200 and
+            "identical" in res.json().get("summary", "").lower() and
+            "New Information:\nNone identified." in res.json().get("summary", "")
+        )
+        log_result("POST /update-summary (Identical Content Fast-Path)", is_ok, f"Status {res.status_code}")
+    except Exception as e:
+        log_result("POST /update-summary (Identical Content Fast-Path)", False, str(e))
 
     # POST /summarize-hierarchical (with Concurrent Map-Reduce)
     try:
