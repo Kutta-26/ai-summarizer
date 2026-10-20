@@ -15,6 +15,9 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10 MB default
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60.0"))  # 60 seconds default
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+WHISPER_CACHE_DIR = os.getenv("WHISPER_CACHE_DIR", None)
+if WHISPER_CACHE_DIR:
+    WHISPER_CACHE_DIR = str(Path(WHISPER_CACHE_DIR).expanduser().resolve())
 
 # Standardized uploads folder (inside backend directory)
 UPLOAD_DIR = _base_dir / "uploads"

@@ -5,7 +5,7 @@ import sys
 import types
 import time
 
-from app.core.config import WHISPER_MODEL_SIZE
+from app.core.config import WHISPER_MODEL_SIZE, WHISPER_CACHE_DIR
 from app.core.logging_config import get_logger
 
 logger = get_logger("media")
@@ -98,7 +98,8 @@ def get_whisper_model():
             _whisper_model = WhisperModel(
                 WHISPER_MODEL_SIZE,
                 device="cpu",
-                compute_type="int8"
+                compute_type="int8",
+                download_root=WHISPER_CACHE_DIR
             )
         except Exception as e:
             raise RuntimeError(

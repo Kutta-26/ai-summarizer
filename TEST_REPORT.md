@@ -15,7 +15,7 @@
 ## 2. Automated Test Execution Matrix
 
 ### Overall Result: 49/49 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 93/93 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites)*
+*(Plus 93/93 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites; plus 8/8 automated Playwright browser E2E tests)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
@@ -251,3 +251,62 @@ Docker deployment verification is **VERIFIED (PASS)**.
 13. **`backend/app/services/media_service.py`**:
     - Defect: When an uploaded media file contained no audible speech or was silent (e.g., `test.wav`), `transcribe_audio` raised an uncaught `RuntimeError("Whisper did not detect any speech in the media file.")`, which propagated to FastAPI as an internal server error (HTTP 500) rather than a client input error.
     - Resolution: Changed exception type to `ValueError` and ensured `except ValueError: raise` in `transcribe_audio`, enabling the endpoint exception handler to catch it cleanly and return HTTP 400 Bad Request with `"Whisper did not detect any speech in the media file."`. Added unit test in `tests/test_advanced_features.py` and regression test in `tests/test_suite.py`.
+
+
+---
+
+## 8. Playwright End-to-End Test Suite Execution Matrix
+
+### Overall Result: 8/8 Automated E2E Tests Passing (100% Success Rate)
+*(7 deterministic mock tests verifying core browser UI/UX flows + 1 live integration test verifying full stack against Groq Cloud)*
+
+- **Framework**: @playwright/test v1.58.x
+- **Browser Runtime**: Chromium Headless (Chrome for Testing 156.0.8078.4)
+- **Target URL**: http://localhost:3000 (production Nginx Docker container)
+- **Execution Mode**: Headless, deterministic network mocks for LLM isolation, plus separate live integration runner
+
+| Test Case ID | Test Flow / Capability | Execution Mode | Status | Verification & Observations |
+| :--- | :--- | :---: | :---: | :--- |
+| **TC-E2E-001** | Application Initial Load | Deterministic | **PASS** | Brand header, subtitle, 8 navigation tabs (Single Document, Key Points, Multi-Document, Compare Documents, Audio / Video, Update Summary, Hierarchical, YouTube Video), and .status-online 'Backend Connected' pill rendered. |
+| **TC-E2E-002** | Single-Document Summarization Flow | Deterministic Mock | **PASS** | File selection card displays name (nnual_report.txt) and TXT badge. Form submission triggers /summarize, resulting in .summary-card with title and structured summary content. |
+| **TC-E2E-003** | Loading Indicator & Disabled Submit Button | Deterministic (In-flight Delay) | **PASS** | Submit button disables immediately upon submission (:disabled), displays spinning loader (.spin), and updates label to 'Processing with Groq LLM...'. Button returns to 'Generate Summary' upon completion. |
+| **TC-E2E-004** | Summary Result Rendering & Options | Deterministic Mock | **PASS** | Switching output format to 'Table' and length to 'Short' passes correct state to UI. Summary metadata bar renders word count, character count, estimated read time, and 'SHORT • TABLE' pill. Markdown tables are parsed into semantic HTML <table> elements. |
+| **TC-E2E-005** | One-Click Clipboard Copy Functionality | Deterministic Mock | **PASS** | Browser clipboard permissions granted. Clicking 'Copy' copies full summary text to system clipboard via 
+avigator.clipboard.writeText(), updates button to 'Copied' (.btn-copied), and verified via 
+avigator.clipboard.readText(). |
+| **TC-E2E-006** | Invalid & Unsupported Input Validation | Client-Side Validation | **PASS** | Submit button disabled when no file is chosen. Uploading .exe triggers immediate error banner ('unsupported format'). Uploading empty 0-byte file displays 'is empty (0 bytes)'. Removing selected file restores dropzone and resets submit state. |
+| **TC-E2E-007** | API Failure Messaging & Error Handling | Deterministic Mocks (400, 500, Drop) | **PASS** | HTTP 500 Groq rate-limit response triggers alert banner with specific guidance. HTTP 400 document >60k characters triggers hierarchical recommendation banner. Simulated network drops render client error alert. |
+| **TC-E2E-008** | Live End-to-End Backend & Groq LLM Integration | Live Stack (LIVE_E2E=true) | **PASS** | Complete round-trip: Browser -> Nginx (port 3000) -> FastAPI (port 8000) -> Groq Cloud LLM -> Real Summary rendering in 3.4 seconds. Conditioned on LIVE_E2E flag to prevent unneeded external API dependency during CI runs. |
+
+---
+
+## 9. Persistent Whisper Model Cache Verification
+
+### Problem Addressed
+Previously, aster-whisper downloaded the 787 MB Systran/faster-whisper-small model into the container's ephemeral root filesystem (/root/.cache/huggingface/hub). Recreating or updating the backend Docker container resulted in complete cache loss, forcing an expensive 787 MB re-download on the next media transcription request.
+
+### Architectural Solution
+1. **Docker Compose Named Volume**: Defined persistent volume whisper_cache with driver: local and mounted it to /root/.cache/huggingface on the i-summarizer-backend service.
+2. **Configurable Cache Path**: Added WHISPER_CACHE_DIR= to docker-compose.yml, config.py, .env.example, and ackend/.env.example.
+3. **Engine Integration**: Updated media_service.py to pass download_root=WHISPER_CACHE_DIR directly to aster_whisper.WhisperModel.
+4. **No Image Bloat**: Model weights are strictly kept in the persistent volume, preventing Docker image size inflation.
+
+### Empirical Persistence & Recreation Evidence
+1. **Initial Cache Inspection**:
+   - Volume i-summarizer_whisper_cache contains /root/.cache/huggingface/hub/models--Systran--faster-whisper-small (787 MB).
+2. **First Media Transcription (POST /summarize-media)**:
+   - Audio file: oice_test.mp3 (196 KB)
+   - HTTP status: 200 OK
+   - Whisper transcription latency: 5,128.6 ms (5.1 seconds)
+   - Total end-to-end request duration: 9,366.8 ms
+3. **Container Destruction & Recreation Test**:
+   - Executed: docker compose up -d --force-recreate backend
+   - Backend container recreated with new container ID (d4f96aa54498).
+   - Container reached healthy heartbeat within 10 seconds.
+4. **Post-Recreation Cache Verification**:
+   - Executed: docker exec ai-summarizer-backend ls -lh /root/.cache/huggingface/hub
+   - Verified: models--Systran--faster-whisper-small (787 MB) remained immediately available on disk.
+5. **Post-Recreation Media Transcription**:
+   - Executed second POST /summarize-media with oice_test.mp3.
+   - Result: HTTP 200 OK returned immediately in 9 seconds with **0 bytes re-downloaded**.
+   - Server log confirmed instant offline load from cached weights.

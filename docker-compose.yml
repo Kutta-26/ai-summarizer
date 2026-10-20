@@ -13,9 +13,11 @@ services:
       - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10485760}
       - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-60.0}
       - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-small}
+      - WHISPER_CACHE_DIR=${WHISPER_CACHE_DIR:-/root/.cache/huggingface/hub}
       - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost
     volumes:
       - backend_uploads:/app/uploads
+      - whisper_cache:/root/.cache/huggingface
       - ./docker/certs:/app/certs:ro
     restart: unless-stopped
     networks:
@@ -45,6 +47,8 @@ services:
 
 volumes:
   backend_uploads:
+    driver: local
+  whisper_cache:
     driver: local
 
 networks:
