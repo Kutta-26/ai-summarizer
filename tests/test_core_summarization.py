@@ -337,3 +337,25 @@ def test_openapi_303_binary_upload_schemas():
         assert "anyOf" not in prop
         assert "contentMediaType" not in prop
 
+
+def test_app_lifespan_lifecycle():
+    """Verify FastAPI lifespan async context manager initializes and tears down cleanly."""
+    import asyncio
+    from main import lifespan
+    import app.services.groq_service as groq_svc
+
+    client_mock = MagicMock()
+    groq_svc._client = client_mock
+
+    async def run_lifespan():
+        async with lifespan(app):
+            res = client.get("/health")
+            assert res.status_code == 200
+            assert res.json().get("status") == "Running"
+
+    asyncio.run(run_lifespan())
+
+    # After lifespan exit: shutdown cleanup must have run
+    assert groq_svc._client is None
+    client_mock.close.assert_called_once()
+

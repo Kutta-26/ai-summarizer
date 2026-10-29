@@ -89,6 +89,20 @@ def get_groq_client() -> Groq:
     return _client
 
 
+def close_groq_client() -> None:
+    """
+    Safely close and reset the singleton Groq client connection pool.
+    """
+    global _client
+    if _client is not None:
+        try:
+            _client.close()
+        except Exception:
+            pass
+        finally:
+            _client = None
+
+
 
 import time
 

@@ -15,7 +15,7 @@
 ## 2. Automated Test Execution Matrix
 
 ### Overall Result: 49/49 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 93/93 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites; plus 8/8 automated Playwright browser E2E tests)*
+*(Plus 94/94 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites; plus 9/9 automated Playwright browser E2E tests)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
@@ -71,17 +71,17 @@
 
 ---
 
-### Dedicated Pytest Unit Test Suites (93/93 Passing)
+### Dedicated Pytest Unit Test Suites (94/94 Passing)
 
 | Test Module | Coverage Area | Tests Passed | Status |
 | :--- | :--- | :---: | :---: |
-| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, Groq API errors | 17 / 17 | **PASS** |
+| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, Groq API errors, FastAPI lifespan context lifecycle | 18 / 18 | **PASS** |
 | `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison identical/context guards, delta update detection identical/context guards, chunking headers, hierarchical enrichment, media speech/silence guards, YouTube | 17 / 17 | **PASS** |
 | `tests/test_importance.py` | Scoring bounds, numerical/entity/definition signals, structural formatting, batch processing | 5 / 5 | **PASS** |
 | `tests/test_redundancy.py` | Exact/near duplicates, semantic preservation, quality selection, fallback filters | 9 / 9 | **PASS** |
 | `tests/test_faithfulness.py` | Entailment, numerical validation, leading-number bullet claims, date/entity checks, LLM fallback & error handling, hierarchical integration | 18 / 18 | **PASS** |
 | `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, leading-number bullet conflicts, schema bounds, LLM ambiguity resolution | 27 / 27 | **PASS** |
-| **Total Pytest Unit Tests** | | **93 / 93** | **PASS (100%)** |
+| **Total Pytest Unit Tests** | | **94 / 94** | **PASS (100%)** |
 
 ---
 
@@ -92,10 +92,10 @@ The React frontend was compiled successfully using Vite.
 - **Vite Version**: 5.4.21
 - **Modules Transformed**: 1,844
 - **Build Status**: 0 errors, 0 warnings
-- **Recorded Build Time**: approximately 3.38 seconds
+- **Recorded Build Time**: approximately 3.39 seconds
 - **`dist/index.html`**: 0.81 kB, gzip 0.45 kB
-- **CSS Bundle**: 17.24 kB, gzip 3.64 kB
-- **JavaScript Bundle**: 206.01 kB, gzip 59.56 kB
+- **CSS Bundle**: 17.66 kB, gzip 3.71 kB
+- **JavaScript Bundle**: 206.62 kB, gzip 59.72 kB
 
 The production build completed successfully without compilation errors or warnings.
 
@@ -253,12 +253,22 @@ Docker deployment verification is **VERIFIED (PASS)**.
     - Resolution: Changed exception type to `ValueError` and ensured `except ValueError: raise` in `transcribe_audio`, enabling the endpoint exception handler to catch it cleanly and return HTTP 400 Bad Request with `"Whisper did not detect any speech in the media file."`. Added unit test in `tests/test_advanced_features.py` and regression test in `tests/test_suite.py`.
 
 
+14. **FastAPI Lifespan Migration (`backend/main.py` & `backend/app/services/groq_service.py`)**:
+    - Defect / Deprecation: `backend/main.py` utilized deprecated `@app.on_event("startup")` handler for orphaned file cleanup, generating runtime `DeprecationWarning: on_event is deprecated, use lifespan event handlers instead`. Furthermore, the application had no shutdown lifecycle handler to gracefully close and reset the Groq client connection pool.
+    - Resolution: Migrated to FastAPI's recommended `@asynccontextmanager async def lifespan(app: FastAPI)` async context manager (`lifespan=lifespan`). Preserved orphaned upload cleanup on startup and implemented `close_groq_client()` on shutdown to tear down open HTTP connection pools cleanly. Added `test_app_lifespan_lifecycle()` in `tests/test_core_summarization.py` verifying startup and shutdown mechanics (94/94 pytest tests passing).
+15. **Playwright Suite Hardening for Offline / Unreachable Backend (`frontend/e2e/summarizer.spec.js`)**:
+    - Defect / Gap: Playwright test suite lacked deterministic verification of the frontend's resilience when the backend server is unreachable or offline (e.g. 503 Service Unavailable or network drop on `/health`).
+    - Resolution: Implemented test case `TC-E2E-009` (`8. Displays backend offline banner and offline status pill when backend is unavailable`) intercepting `/health` with HTTP 503 and asserting the `.status-offline` pill and `.backend-offline-banner` render without crashing the UI (9/9 Playwright tests passing).
+16. **Docker Whisper Cache Persistence Verification (`docker-compose.yml`)**:
+    - Verification: Confirmed persistent named volume `ai-summarizer_whisper_cache` mounted at `/root/.cache/huggingface` in the backend container aligns with `WHISPER_CACHE_DIR=/root/.cache/huggingface/hub` and `download_root`.
+    - Resiliency Test: Recreated container via `docker compose up -d --force-recreate backend` without volume deletion; verified all `models--Systran--faster-whisper-small` snapshot weights persisted across container recreation and subsequent health checks passed in under 10 seconds.
+
 ---
 
 ## 8. Playwright End-to-End Test Suite Execution Matrix
 
-### Overall Result: 8/8 Automated E2E Tests Passing (100% Success Rate)
-*(7 deterministic mock tests verifying core browser UI/UX flows + 1 live integration test verifying full stack against Groq Cloud)*
+### Overall Result: 9/9 Automated E2E Tests Passing (100% Success Rate)
+*(8 deterministic mock tests verifying core browser UI/UX flows + 1 live integration test verifying full stack against Groq Cloud)*
 
 - **Framework**: @playwright/test v1.58.x
 - **Browser Runtime**: Chromium Headless (Chrome for Testing 156.0.8078.4)
@@ -276,7 +286,8 @@ avigator.clipboard.writeText(), updates button to 'Copied' (.btn-copied), and ve
 avigator.clipboard.readText(). |
 | **TC-E2E-006** | Invalid & Unsupported Input Validation | Client-Side Validation | **PASS** | Submit button disabled when no file is chosen. Uploading .exe triggers immediate error banner ('unsupported format'). Uploading empty 0-byte file displays 'is empty (0 bytes)'. Removing selected file restores dropzone and resets submit state. |
 | **TC-E2E-007** | API Failure Messaging & Error Handling | Deterministic Mocks (400, 500, Drop) | **PASS** | HTTP 500 Groq rate-limit response triggers alert banner with specific guidance. HTTP 400 document >60k characters triggers hierarchical recommendation banner. Simulated network drops render client error alert. |
-| **TC-E2E-008** | Live End-to-End Backend & Groq LLM Integration | Live Stack (LIVE_E2E=true) | **PASS** | Complete round-trip: Browser -> Nginx (port 3000) -> FastAPI (port 8000) -> Groq Cloud LLM -> Real Summary rendering in 3.4 seconds. Conditioned on LIVE_E2E flag to prevent unneeded external API dependency during CI runs. |
+| **TC-E2E-008** | Live End-to-End Backend & Groq LLM Integration | Live Stack (LIVE_E2E=true) | **PASS** | Complete round-trip: Browser -> Nginx (port 3000) -> FastAPI (port 8000) -> Groq Cloud LLM -> Real Summary rendering in 3.9 seconds. Conditioned on LIVE_E2E flag to prevent unneeded external API dependency during CI runs. |
+| **TC-E2E-009** | Backend Unavailable / Offline Graceful Handling | Deterministic Mock (503 / Offline) | **PASS** | Intercepts /health returning HTTP 503. Verifies .status-offline 'Backend Offline' pill and .backend-offline-banner with user-friendly recovery instructions. |
 
 ---
 

@@ -324,4 +324,31 @@ test.describe('AI Summarizer — End-to-End Application Suite', () => {
     await expect(alertError).toBeVisible();
   });
 
+  // ============================================================
+  // 8. BACKEND-UNAVAILABLE SCENARIO
+  // ============================================================
+  test('8. Displays backend offline banner and offline status pill when backend is unavailable', async ({ page }) => {
+    // Override default route with 503 / Network drop
+    await page.route('**/health', async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 'Offline' }),
+      });
+    });
+
+    await page.goto('/');
+
+    // Verify offline status pill
+    const statusPill = page.locator('.status-pill');
+    await expect(statusPill).toBeVisible();
+    await expect(statusPill).toHaveClass(/status-offline/);
+    await expect(statusPill).toContainText('Backend Offline');
+
+    // Verify offline warning banner
+    const offlineBanner = page.locator('.backend-offline-banner');
+    await expect(offlineBanner).toBeVisible();
+    await expect(offlineBanner).toContainText('Backend is currently offline or unreachable');
+  });
+
 });

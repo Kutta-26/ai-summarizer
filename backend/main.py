@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from contextlib import asynccontextmanager
 
 import time
 from app.core.config import CORS_ORIGINS, UPLOAD_DIR
@@ -63,6 +64,52 @@ Every HTTP response returns an execution latency header: `X-Process-Time`.
 """
 
 # ============================================================
+# LIFECYCLE & CLEANUP MANAGEMENT
+# ============================================================
+
+def cleanup_orphaned_uploads():
+    """
+    Remove orphaned temporary files in the uploads directory
+    older than 1 hour on server startup.
+    """
+    try:
+        now = time.time()
+        if UPLOAD_DIR.exists():
+            for item in UPLOAD_DIR.iterdir():
+                if item.is_file() and (now - item.stat().st_mtime > 3600):
+                    try:
+                        item.unlink()
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan context manager handling startup and shutdown events.
+    Replaces deprecated @app.on_event("startup") and @app.on_event("shutdown").
+    """
+    # Startup lifecycle
+    logger.info("Initializing AI Summarizer application lifespan...")
+    try:
+        cleanup_orphaned_uploads()
+    except Exception as e:
+        logger.warning(f"Error during startup orphaned uploads cleanup: {e}")
+
+    yield
+
+    # Shutdown lifecycle
+    logger.info("Shutting down AI Summarizer application lifespan...")
+    try:
+        from app.services.groq_service import close_groq_client
+        close_groq_client()
+    except Exception as e:
+        logger.warning(f"Error during shutdown client cleanup: {e}")
+
+
+# ============================================================
 # FASTAPI APPLICATION
 # ============================================================
 
@@ -72,6 +119,7 @@ app = FastAPI(
     version="1.0.0",
     openapi_version="3.0.3",
     openapi_tags=TAGS_METADATA,
+    lifespan=lifespan,
 )
 
 
@@ -109,27 +157,7 @@ app.add_middleware(
 )
 
 
-# ============================================================
-# LIFECYCLE / CLEANUP
-# ============================================================
 
-@app.on_event("startup")
-def cleanup_orphaned_uploads():
-    """
-    Remove orphaned temporary files in the uploads directory
-    older than 1 hour on server startup.
-    """
-    try:
-        now = time.time()
-        if UPLOAD_DIR.exists():
-            for item in UPLOAD_DIR.iterdir():
-                if item.is_file() and (now - item.stat().st_mtime > 3600):
-                    try:
-                        item.unlink()
-                    except OSError:
-                        pass
-    except Exception:
-        pass
 
 
 
