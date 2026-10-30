@@ -119,13 +119,13 @@ def validate_media_file(filename: str):
     Validate the uploaded audio/video file extension.
     """
 
-    if not filename:
+    if not filename or not filename.strip():
         raise ValueError(
             "No media filename was provided."
         )
 
     extension = os.path.splitext(
-        filename
+        filename.strip()
     )[1].lower()
 
     if extension not in ALLOWED_MEDIA_EXTENSIONS:
@@ -160,10 +160,11 @@ def extract_audio(media_path: str) -> str:
             "Media file was not found."
         )
 
-    audio_path = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         suffix=".wav",
         delete=False
-    ).name
+    ) as temp_wav:
+        audio_path = temp_wav.name
 
     command = [
         "ffmpeg",
@@ -196,9 +197,10 @@ def extract_audio(media_path: str) -> str:
             if os.path.exists(audio_path):
                 os.remove(audio_path)
 
+            logger.warning(f"FFmpeg audio extraction failed (code {result.returncode}): {result.stderr.strip()[:300]}")
             raise RuntimeError(
-                "FFmpeg failed to extract audio.\n"
-                f"{result.stderr}"
+                "FFmpeg failed to extract audio from the media file. "
+                "Please verify the media file is not corrupted."
             )
 
         if not os.path.exists(audio_path):

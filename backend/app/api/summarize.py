@@ -201,7 +201,14 @@ def validate_file(file: UploadFile):
     """
     Validate uploaded file type and filename.
     """
-    safe_filename = os.path.basename(file.filename or "")
+    raw_name = file.filename or ""
+    if "\0" in raw_name or "%00" in raw_name.lower():
+        raise HTTPException(
+            status_code=400,
+            detail="Filename contains invalid characters."
+        )
+
+    safe_filename = os.path.basename(raw_name).strip()
     if not safe_filename:
         raise HTTPException(
             status_code=400,
@@ -480,6 +487,12 @@ def summarize_multiple(
             detail="At least one file is required."
         )
 
+    if len(files) > 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Maximum of 10 documents can be synthesized simultaneously."
+        )
+
     file_paths = []
 
     try:
@@ -532,6 +545,15 @@ def summarize_multiple(
             )
 
             combined_text += text
+
+            if len(combined_text) > 60000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Combined document text exceeds 60,000 characters (~15,000 words) "
+                        "for multi-document synthesis. Please provide documents within the context limit."
+                    )
+                )
 
         # ----------------------------------------------------
         # Final validation
@@ -1377,6 +1399,12 @@ def check_faithfulness_endpoint(
             detail="Summary text cannot be empty."
         )
 
+    if len(summary_text) > 60000:
+        raise HTTPException(
+            status_code=400,
+            detail="Summary text exceeds maximum context limit of 60,000 characters."
+        )
+
     file_path = None
     extracted_source = ""
 
@@ -1394,6 +1422,12 @@ def check_faithfulness_endpoint(
             raise HTTPException(
                 status_code=400,
                 detail="Either 'file' or 'source_text' must be provided with readable source content."
+            )
+
+        if len(final_source) > 100000:
+            raise HTTPException(
+                status_code=400,
+                detail="Source text exceeds maximum limit of 100,000 characters."
             )
 
         result = check_faithfulness(
@@ -1467,6 +1501,12 @@ def check_contradictions_endpoint(
             detail="Summary text cannot be empty."
         )
 
+    if len(summary_text) > 60000:
+        raise HTTPException(
+            status_code=400,
+            detail="Summary text exceeds maximum context limit of 60,000 characters."
+        )
+
     file_path = None
     extracted_source = ""
 
@@ -1484,6 +1524,12 @@ def check_contradictions_endpoint(
             raise HTTPException(
                 status_code=400,
                 detail="Either 'file' or 'source_text' must be provided with readable source content."
+            )
+
+        if len(final_source) > 100000:
+            raise HTTPException(
+                status_code=400,
+                detail="Source text exceeds maximum limit of 100,000 characters."
             )
 
         result = check_contradictions(

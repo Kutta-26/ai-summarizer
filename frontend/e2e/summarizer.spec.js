@@ -251,6 +251,18 @@ test.describe('AI Summarizer — End-to-End Application Suite', () => {
     await expect(alertError).toContainText('is empty (0 bytes)');
     await expect(submitBtn).toBeDisabled();
 
+    // 3b. Oversized file (>10 MB) client-side rejection
+    const oversizedBuffer = Buffer.alloc(11 * 1024 * 1024);
+    await fileInput.setInputFiles({
+      name: 'oversized.txt',
+      mimeType: 'text/plain',
+      buffer: oversizedBuffer,
+    });
+
+    await expect(alertError).toBeVisible();
+    await expect(alertError).toContainText('exceeds the maximum allowed size of 10 MB');
+    await expect(submitBtn).toBeDisabled();
+
     // 4. Valid file selection removes error and enables submit
     await fileInput.setInputFiles({
       name: 'valid.txt',

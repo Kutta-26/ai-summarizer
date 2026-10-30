@@ -536,6 +536,50 @@ def run_tests():
     except Exception as e:
         log_result("POST /check-contradictions (Missing source text & file)", False, str(e))
 
+    # Key-points document >60k chars guard
+    try:
+        res = client.post(
+            "/key-points",
+            files={"file": ("huge_points.txt", b"Salient key point fact statement. " * 3000, "text/plain")},
+            data={"number_of_points": 5}
+        )
+        log_result("POST /key-points (Document >60k chars guard -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /key-points (Oversized guard)", False, str(e))
+
+    # Multi-document max file count guard (>10 files)
+    try:
+        excess_files = [
+            ("files", (f"doc_{i}.txt", b"Document content sample.", "text/plain"))
+            for i in range(11)
+        ]
+        res = client.post("/summarize-multiple", files=excess_files)
+        log_result("POST /summarize-multiple (Max 10 files guard -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /summarize-multiple (Max 10 files guard)", False, str(e))
+
+    # Multi-document combined context guard (>60k chars)
+    try:
+        large_files = [
+            ("files", ("doc1.txt", b"Large document content part A. " * 1500, "text/plain")),
+            ("files", ("doc2.txt", b"Large document content part B. " * 1500, "text/plain")),
+        ]
+        res = client.post("/summarize-multiple", files=large_files)
+        log_result("POST /summarize-multiple (Combined text >60k chars guard -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /summarize-multiple (Combined context guard)", False, str(e))
+
+    # Filename null byte / invalid character guard
+    try:
+        res = client.post(
+            "/summarize",
+            files={"file": ("malicious\0test.txt", b"Safe text", "text/plain")},
+            data={"length": "short", "format": "paragraph"}
+        )
+        log_result("POST /summarize (Filename null byte / invalid char -> 400)", res.status_code == 400, f"Status {res.status_code}: {res.json().get('detail')}")
+    except Exception as e:
+        log_result("POST /summarize (Filename null byte guard)", False, str(e))
+
     # ============================================================
     # 4. Functional End-to-End Tests (Live or Deterministic Mock)
     # ============================================================

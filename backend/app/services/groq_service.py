@@ -421,6 +421,12 @@ def extract_key_points(
             "Cannot extract key points from empty text."
         )
 
+    if len(text) > 60000:
+        raise ValueError(
+            "Document exceeds 60,000 characters (~15,000 words) for key-point extraction. "
+            "Please provide a document within the context limit."
+        )
+
     # --------------------------------------------------------
     # Validate number of points
     # --------------------------------------------------------
@@ -1094,6 +1100,11 @@ def hierarchical_summarize(
     if not text or not text.strip():
         raise ValueError("Cannot summarize empty text.")
 
+    if len(text) > 1000000:
+        raise ValueError(
+            "Document exceeds 1,000,000 characters limit for hierarchical summarization."
+        )
+
     # --------------------------------------------------------
     # Validate chunk_size
     # --------------------------------------------------------
@@ -1120,6 +1131,12 @@ def hierarchical_summarize(
 
     if not chunks:
         raise ValueError("No valid content found to summarize.")
+
+    if len(chunks) > 100:
+        raise ValueError(
+            f"Document produces too many sections ({len(chunks)} sections, maximum allowed is 100). "
+            "Please increase the chunk_size or provide a smaller document."
+        )
 
     # If document has only 1 chunk, perform direct summarization
     if len(chunks) == 1:

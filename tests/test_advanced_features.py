@@ -386,3 +386,67 @@ def test_youtube_summarization_mocked():
         data = res.json()
         assert "summary" in data
         assert "FastAPI" in data["summary"]
+
+
+# ============================================================
+# 7. INPUT VALIDATION & RESOURCE SAFETY HARDENING (SECURITY)
+# ============================================================
+
+def test_summarize_multiple_max_files_guard():
+    """Verify uploading more than 10 documents triggers HTTP 400."""
+    files = [
+        ("files", (f"doc_{i}.txt", b"Document content sample.", "text/plain"))
+        for i in range(11)
+    ]
+    res = client.post("/summarize-multiple", files=files)
+    assert res.status_code == 400
+    assert "maximum of 10 documents" in res.json().get("detail", "").lower()
+
+
+def test_summarize_multiple_combined_context_guard():
+    """Verify combined multi-document text > 60,000 chars triggers HTTP 400."""
+    large_doc1 = ("Large document content part A. " * 1500).encode("utf-8")  # ~46k chars
+    large_doc2 = ("Large document content part B. " * 1500).encode("utf-8")  # ~46k chars
+    files = [
+        ("files", ("doc1.txt", large_doc1, "text/plain")),
+        ("files", ("doc2.txt", large_doc2, "text/plain")),
+    ]
+    res = client.post("/summarize-multiple", files=files)
+    assert res.status_code == 400
+    assert "combined document text exceeds 60,000 characters" in res.json().get("detail", "").lower()
+
+
+def test_hierarchical_max_sections_guard():
+    """Verify documents generating > 100 chunks trigger HTTP 400 protection against thread pool overload."""
+    # With chunk_size=500, 52,000 chars will generate >100 chunks
+    large_text = ("Section content line. " * 2500).encode("utf-8")  # ~55k chars
+    res = client.post(
+        "/summarize-hierarchical",
+        files={"file": ("large_sections.txt", large_text, "text/plain")},
+        data={"chunk_size": 500}
+    )
+    assert res.status_code == 400
+    assert "too many sections" in res.json().get("detail", "").lower()
+
+
+def test_faithfulness_oversized_summary_guard():
+    """Verify summary text > 60,000 chars triggers HTTP 400."""
+    huge_summary = "Factual claim summary sentence. " * 2500
+    res = client.post(
+        "/check-faithfulness",
+        data={"source_text": "Source text content.", "summary_text": huge_summary}
+    )
+    assert res.status_code == 400
+    assert "exceeds maximum context limit" in res.json().get("detail", "").lower()
+
+
+def test_contradiction_oversized_summary_guard():
+    """Verify summary text > 60,000 chars triggers HTTP 400."""
+    huge_summary = "Contradiction claim sentence. " * 2500
+    res = client.post(
+        "/check-contradictions",
+        data={"source_text": "Source text content.", "summary_text": huge_summary}
+    )
+    assert res.status_code == 400
+    assert "exceeds maximum context limit" in res.json().get("detail", "").lower()
+

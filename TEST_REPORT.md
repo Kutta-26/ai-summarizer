@@ -14,8 +14,8 @@
 
 ## 2. Automated Test Execution Matrix
 
-### Overall Result: 49/49 Automated Regression Tests Passing — 100% Success Rate
-*(Plus 94/94 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites; plus 9/9 automated Playwright browser E2E tests)*
+### Overall Result: 53/53 Automated Regression Tests Passing — 100% Success Rate
+*(Plus 102/102 automated pytest unit tests across core, advanced, importance, redundancy, faithfulness, and contradiction suites; plus 8/8 automated deterministic Playwright browser E2E tests + 1 live integration test)*
 
 | Test Suite | Endpoint / Component | Test Case | Status | Notes |
 | :--- | :--- | :--- | :---: | :--- |
@@ -55,6 +55,10 @@
 | **Error Handling** | `POST /check-faithfulness` | Missing source text & file | **PASS** | HTTP 400: required source material validation |
 | **Error Handling** | `POST /check-contradictions` | Whitespace summary text | **PASS** | HTTP 400: summary text validation |
 | **Error Handling** | `POST /check-contradictions` | Missing source text & file | **PASS** | HTTP 400: required source material validation |
+| **Security & Limits** | `POST /key-points` | Document >60k characters | **PASS** | HTTP 400: key points context safety guard rejection |
+| **Security & Limits** | `POST /summarize-multiple` | File count >10 documents | **PASS** | HTTP 400: batch document count limit enforced |
+| **Security & Limits** | `POST /summarize-multiple` | Combined text >60k characters | **PASS** | HTTP 400: early accumulator context limit rejection |
+| **Security & Limits** | `POST /summarize` | Filename null-byte injection | **PASS** | HTTP 400: filename character sanitization rejection |
 | **Single Document** | `POST /summarize` | `document_a.txt` | **PASS** | HTTP 200: valid Groq-generated summary |
 | **Key Points** | `POST /key-points` | `keypoints_test.txt` | **PASS** | HTTP 200: requested key points returned |
 | **Multi-Document** | `POST /summarize-multiple` | `document_a.txt` + `document_b.txt` | **PASS** | HTTP 200: multi-document synthesis |
@@ -71,17 +75,17 @@
 
 ---
 
-### Dedicated Pytest Unit Test Suites (94/94 Passing)
+### Dedicated Pytest Unit Test Suites (102/102 Passing)
 
 | Test Module | Coverage Area | Tests Passed | Status |
 | :--- | :--- | :---: | :---: |
-| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, Groq API errors, FastAPI lifespan context lifecycle | 18 / 18 | **PASS** |
-| `tests/test_advanced_features.py` | Multi-doc synthesis, document comparison identical/context guards, delta update detection identical/context guards, chunking headers, hierarchical enrichment, media speech/silence guards, YouTube | 17 / 17 | **PASS** |
+| `tests/test_core_summarization.py` | Lengths, formats, executive summary, key points boundaries & leading-number preservation, corrupt PDF cleanup, OpenAPI 3.0.3 binary schemas, 10MB limit, 60k char guard, key points 60k guard, null-byte & whitespace filename sanitization, Groq API errors, FastAPI lifespan context lifecycle | 21 / 21 | **PASS** |
+| `tests/test_advanced_features.py` | Multi-doc synthesis, multi-doc max 10 files & combined 60k context guards, document comparison identical/context guards, delta update detection identical/context guards, chunking headers, hierarchical enrichment, hierarchical max 100 sections guard, media speech/silence guards, YouTube, faithfulness & contradiction oversized summary guards | 22 / 22 | **PASS** |
 | `tests/test_importance.py` | Scoring bounds, numerical/entity/definition signals, structural formatting, batch processing | 5 / 5 | **PASS** |
 | `tests/test_redundancy.py` | Exact/near duplicates, semantic preservation, quality selection, fallback filters | 9 / 9 | **PASS** |
 | `tests/test_faithfulness.py` | Entailment, numerical validation, leading-number bullet claims, date/entity checks, LLM fallback & error handling, hierarchical integration | 18 / 18 | **PASS** |
 | `tests/test_contradiction.py` | Numerical/percentage/temporal/entity/antonym conflicts, leading-number bullet conflicts, schema bounds, LLM ambiguity resolution | 27 / 27 | **PASS** |
-| **Total Pytest Unit Tests** | | **94 / 94** | **PASS (100%)** |
+| **Total Pytest Unit Tests** | | **102 / 102** | **PASS (100%)** |
 
 ---
 
@@ -262,6 +266,24 @@ Docker deployment verification is **VERIFIED (PASS)**.
 16. **Docker Whisper Cache Persistence Verification (`docker-compose.yml`)**:
     - Verification: Confirmed persistent named volume `ai-summarizer_whisper_cache` mounted at `/root/.cache/huggingface` in the backend container aligns with `WHISPER_CACHE_DIR=/root/.cache/huggingface/hub` and `download_root`.
     - Resiliency Test: Recreated container via `docker compose up -d --force-recreate backend` without volume deletion; verified all `models--Systran--faster-whisper-small` snapshot weights persisted across container recreation and subsequent health checks passed in under 10 seconds.
+17. **Key Points Extraction Context Guard (`backend/app/services/groq_service.py`)**:
+    - Defect / Gap: `extract_key_points` lacked the 60,000 character context safety guard present on other text-processing endpoints. An uploaded document exceeding 60,000 characters would bypass client protection and consume excessive tokens / trigger upstream LLM rate limits.
+    - Resolution: Added context check `if len(text) > 60000:` raising `ValueError` in `extract_key_points`. Verified via new unit test in `tests/test_core_summarization.py` and regression test in `tests/test_suite.py` returning HTTP 400.
+18. **Multi-Document Synthesis File & Accumulator Guards (`backend/app/api/summarize.py`)**:
+    - Defect / Gap: `summarize_multiple` accepted an unbounded number of files and buffered all extracted text into RAM before validating total text length against the 60,000 character context limit.
+    - Resolution: Enforced a maximum batch limit of 10 documents (`len(files) > 10` returns HTTP 400) and an early combined text accumulator guard (`len(combined_text) > 60000` returns HTTP 400 immediately). Added regression tests in `tests/test_advanced_features.py` and `tests/test_suite.py`.
+19. **Hierarchical Summarization Runaway Section Limiter (`backend/app/services/groq_service.py`)**:
+    - Defect / Gap: `hierarchical_summarize` had no safeguard against very large inputs or tiny chunk configurations creating hundreds of concurrent chunk summarization threads, which could saturate the thread pool and exhaust LLM quotas.
+    - Resolution: Enforced a 1,000,000 character document cap and a maximum section count guard (`len(chunks) > 100` raises `ValueError`). Verified via regression test in `tests/test_advanced_features.py` returning HTTP 400.
+20. **Faithfulness & Contradiction Input Context Bounds (`backend/app/api/summarize.py`)**:
+    - Defect / Gap: `/check-faithfulness` and `/check-contradictions` did not check character limits on `summary_text` or `source_text`, creating combinatorial CPU matching bottlenecks for oversized inputs.
+    - Resolution: Added guards bounding `summary_text` to 60,000 characters and `source_text` to 100,000 characters with clean HTTP 400 responses. Added regression tests in `tests/test_advanced_features.py`.
+21. **Filename Sanitization Against Poisoning & Null Bytes (`backend/app/api/summarize.py`)**:
+    - Defect / Gap: Filenames containing embedded null bytes (`\0` or URL-encoded `%00`) or whitespace-only names could cause unexpected path behavior.
+    - Resolution: Added null-byte and `%00` detection returning HTTP 400 "Filename contains invalid characters", and enforced `.strip()` on filename basename. Added regression tests in `tests/test_core_summarization.py` and `tests/test_suite.py`.
+22. **Windows File-Lock Safety & Error Sanitization (`backend/app/services/media_service.py`)**:
+    - Defect / Gap: `tempfile.NamedTemporaryFile` in `extract_audio` left an open OS file handle on Windows, risking access-denied file collisions with `ffmpeg.exe`. Furthermore, raw FFmpeg stderr output could expose server filesystem paths in error responses.
+    - Resolution: Wrapped temporary file creation in a context manager to close the OS file handle before executing FFmpeg, and sanitized error messages to avoid internal path exposure. Added client-side oversized 11 MB file validation in Playwright suite.
 
 ---
 

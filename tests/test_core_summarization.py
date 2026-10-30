@@ -359,3 +359,38 @@ def test_app_lifespan_lifecycle():
     assert groq_svc._client is None
     client_mock.close.assert_called_once()
 
+
+def test_key_points_context_limit_guard():
+    """Verify documents > 60,000 characters trigger 400 for key points extraction."""
+    huge_text = ("Salient key point fact statement. " * 3000).encode("utf-8")
+    res = client.post(
+        "/key-points",
+        files={"file": ("huge_points.txt", huge_text, "text/plain")},
+        data={"number_of_points": 5}
+    )
+    assert res.status_code == 400
+    assert "exceeds 60,000 characters" in res.json().get("detail", "").lower()
+
+
+def test_null_byte_filename_rejected():
+    """Verify files with embedded null bytes in filename are safely rejected with 400."""
+    res = client.post(
+        "/summarize",
+        files={"file": ("malicious\0test.txt", b"Safe text", "text/plain")},
+        data={"length": "short", "format": "paragraph"}
+    )
+    assert res.status_code == 400
+    assert "invalid characters" in res.json().get("detail", "").lower()
+
+
+def test_whitespace_filename_rejected():
+    """Verify files with whitespace-only filename are rejected with 400."""
+    res = client.post(
+        "/summarize",
+        files={"file": ("   ", b"Sample text", "text/plain")},
+        data={"length": "short", "format": "paragraph"}
+    )
+    assert res.status_code == 400
+    assert "no filename provided" in res.json().get("detail", "").lower()
+
+
