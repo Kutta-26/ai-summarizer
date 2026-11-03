@@ -10,7 +10,12 @@ from groq import (
     RateLimitError,
     APITimeoutError,
     APIConnectionError,
-    AuthenticationError
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+    InternalServerError,
+    APIStatusError
 )
 
 from app.core.config import (
@@ -43,7 +48,7 @@ _client = None
 def get_groq_client() -> Groq:
     """
     Lazily initialize and return the Groq client.
-    Ensures safe module imports, connection pooling, and cross-platform
+    Configures granular connect/read timeouts, connection pooling, and cross-platform
     SSL certificate resolution (including Windows System CA store).
     """
     global _client
@@ -53,6 +58,13 @@ def get_groq_client() -> Groq:
             raise RuntimeError(
                 "GROQ_API_KEY is not configured. Please set GROQ_API_KEY in .env or environment variables."
             )
+        timeout_config = httpx.Timeout(
+            timeout=REQUEST_TIMEOUT,
+            connect=min(10.0, REQUEST_TIMEOUT),
+            read=REQUEST_TIMEOUT,
+            write=min(10.0, REQUEST_TIMEOUT),
+            pool=5.0
+        )
         try:
             # Provide an optimized HTTP client with system SSL context and connection pooling
             ssl_ctx = ssl.create_default_context()
@@ -71,20 +83,20 @@ def get_groq_client() -> Groq:
                         pass
             http_client = httpx.Client(
                 verify=ssl_ctx,
-                timeout=REQUEST_TIMEOUT,
+                timeout=timeout_config,
                 limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
             )
             _client = Groq(
                 api_key=key,
                 http_client=http_client,
-                timeout=REQUEST_TIMEOUT,
-                max_retries=2
+                timeout=timeout_config,
+                max_retries=0  # Centralize retries in _call_groq_chat for observability and metrics
             )
         except Exception:
             _client = Groq(
                 api_key=key,
-                timeout=REQUEST_TIMEOUT,
-                max_retries=2
+                timeout=timeout_config,
+                max_retries=0
             )
     return _client
 
@@ -103,12 +115,50 @@ def close_groq_client() -> None:
             _client = None
 
 
-
 import time
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    """
+    Determine whether an error from the Groq SDK / HTTP layer is transient and safe to retry.
+    """
+    if isinstance(e, (RateLimitError, APITimeoutError, APIConnectionError)):
+        return True
+    if isinstance(e, InternalServerError):
+        return True
+    if isinstance(e, APIStatusError):
+        status = getattr(e, "status_code", None)
+        if status in (500, 502, 503, 504):
+            return True
+    if isinstance(e, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    return False
+
+
+def _get_retry_after(e: Exception, default_delay: float) -> float:
+    """
+    Extract Retry-After header from an API error response if present.
+    Returns the delay in seconds, bounded between default_delay and 15.0s.
+    """
+    try:
+        response = getattr(e, "response", None)
+        if response is not None:
+            headers = getattr(response, "headers", None)
+            if headers:
+                raw_val = headers.get("retry-after")
+                if raw_val:
+                    parsed = float(raw_val)
+                    if 0.1 <= parsed <= 15.0:
+                        return parsed
+    except Exception:
+        pass
+    return default_delay
+
 
 def _handle_groq_exception(e: Exception, operation: str = "operation") -> RuntimeError:
     """
-    Map raw Groq SDK and HTTP exceptions to clear, user-actionable RuntimeErrors.
+    Map raw Groq SDK and HTTP exceptions to clear, user-actionable RuntimeErrors
+    while ensuring sensitive credentials and API keys are never leaked.
     """
     if isinstance(e, RateLimitError):
         return RuntimeError(
@@ -126,8 +176,36 @@ def _handle_groq_exception(e: Exception, operation: str = "operation") -> Runtim
         return RuntimeError(
             "Groq API authentication failed. Please verify your GROQ_API_KEY."
         )
+    if isinstance(e, BadRequestError):
+        err_str = str(e).lower()
+        if "context_length_exceeded" in err_str or "context limit" in err_str:
+            return RuntimeError(
+                f"Document exceeds Groq LLM context limits during {operation}. Please reduce document size or use hierarchical summarization."
+            )
+        return RuntimeError(
+            f"Groq API rejected request parameters during {operation}."
+        )
+    if isinstance(e, NotFoundError):
+        return RuntimeError(
+            f"Configured Groq model '{MODEL_NAME}' was not found or is decommissioned. Please check GROQ_MODEL in configuration."
+        )
+    if isinstance(e, PermissionDeniedError):
+        return RuntimeError(
+            f"Permission denied accessing Groq API during {operation}."
+        )
+    if isinstance(e, InternalServerError) or (isinstance(e, APIStatusError) and getattr(e, "status_code", 0) >= 500):
+        code = getattr(e, "status_code", 500)
+        return RuntimeError(
+            f"Groq upstream service encountered an internal error ({code}) during {operation}. Please try again later."
+        )
+
+    clean_msg = str(e)
+    clean_msg = re.sub(r"gsk_[A-Za-z0-9_-]{10,}", "[REDACTED_API_KEY]", clean_msg)
+    clean_msg = re.sub(r"Bearer\s+[A-Za-z0-9_.-]+", "Bearer [REDACTED]", clean_msg)
+    if len(clean_msg) > 150:
+        clean_msg = clean_msg[:150] + "..."
     return RuntimeError(
-        f"{operation.capitalize()} failed: {str(e)}"
+        f"{operation.capitalize()} failed: {clean_msg}"
     )
 
 
@@ -138,12 +216,20 @@ def _call_groq_chat(
     response_format: dict = None
 ) -> str:
     """
-    Executes a Groq chat completion with automatic exponential backoff for transient rate limits and network drops.
+    Executes a Groq chat completion with bounded exponential backoff for transient failures
+    (rate limits, network timeouts, connection drops, and 5xx provider server errors).
     """
-    max_attempts = 4
-    delay = 2.0
+    max_attempts = 3
+    base_delay = 1.5
+    delay = base_delay
+
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    logger.info(
+        f"Initiating LLM call: operation='{operation}', model='{MODEL_NAME}', prompt_chars={total_chars}"
+    )
 
     for attempt in range(1, max_attempts + 1):
+        call_start = time.perf_counter()
         try:
             groq_client = get_groq_client()
             create_kwargs = {
@@ -161,27 +247,41 @@ def _call_groq_chat(
                 raise RuntimeError(
                     f"The {operation} service returned an empty response."
                 )
+
+            call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+            logger.info(
+                f"LLM call completed: operation='{operation}', attempt={attempt}, "
+                f"duration_ms={call_duration_ms:.1f}, response_chars={len(content)}"
+            )
             return content.strip()
 
-        except RateLimitError as e:
-            if attempt == max_attempts:
-                raise RuntimeError(
-                    f"Groq API rate limit reached during {operation}. Please wait a moment and try again."
-                ) from e
-            time.sleep(delay)
-            delay *= 2.0
-
-        except (APITimeoutError, APIConnectionError) as e:
-            if attempt == max_attempts:
-                raise _handle_groq_exception(e, operation) from e
-            time.sleep(delay)
-            delay *= 2.0
-
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError) as e:
+            # Application-level error or empty response
             raise
 
         except Exception as e:
-            raise _handle_groq_exception(e, operation) from e
+            call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+            if _is_retryable_error(e) and attempt < max_attempts:
+                sleep_time = _get_retry_after(e, delay)
+                logger.warning(
+                    f"LLM call attempt {attempt}/{max_attempts} failed for operation='{operation}' "
+                    f"with {type(e).__name__} in {call_duration_ms:.1f}ms: retrying in {sleep_time:.2f}s..."
+                )
+                time.sleep(sleep_time)
+                delay = min(delay * 2.0, 10.0)
+                continue
+
+            # Permanent failure or retry attempts exhausted
+            mapped = _handle_groq_exception(e, operation)
+            if attempt == max_attempts and _is_retryable_error(e):
+                logger.error(
+                    f"LLM call exhausted all {max_attempts} attempts for operation='{operation}': {mapped}"
+                )
+            else:
+                logger.warning(
+                    f"LLM call permanent error for operation='{operation}': {mapped}"
+                )
+            raise mapped from e
 
     raise RuntimeError(f"{operation.capitalize()} failed after {max_attempts} attempts.")
 

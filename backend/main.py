@@ -4,8 +4,9 @@ from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
 
 import time
+import uuid
 from app.core.config import CORS_ORIGINS, UPLOAD_DIR
-from app.core.logging_config import get_logger
+from app.core.logging_config import get_logger, set_request_id, request_id_ctx
 from app.api.summarize import router as summarize_router
 from app.schemas.summarize import MessageResponse, HealthResponse
 
@@ -133,12 +134,18 @@ async def record_process_time(request: Request, call_next):
     Measures and logs endpoint execution latency, and injects
     the standard X-Process-Time header into the HTTP response.
     """
+    req_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:8]
+    token = set_request_id(req_id)
     start_time = time.perf_counter()
-    response = await call_next(request)
-    duration = time.perf_counter() - start_time
-    response.headers["X-Process-Time"] = f"{duration:.4f}s"
-    logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({duration * 1000.0:.1f}ms)")
-    return response
+    try:
+        response = await call_next(request)
+        duration = time.perf_counter() - start_time
+        response.headers["X-Process-Time"] = f"{duration:.4f}s"
+        response.headers["X-Request-ID"] = req_id
+        logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({duration * 1000.0:.1f}ms)")
+        return response
+    finally:
+        request_id_ctx.reset(token)
 
 
 # ============================================================

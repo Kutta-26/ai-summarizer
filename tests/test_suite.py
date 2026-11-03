@@ -109,6 +109,15 @@ def run_tests():
     except Exception as e:
         log_result("Observability Header (X-Process-Time)", False, str(e))
 
+    try:
+        # Observability correlation ID header check
+        res = client.get("/health", headers={"X-Request-ID": "ci-trace-1234"})
+        req_id_hdr = res.headers.get("x-request-id")
+        is_ok = (req_id_hdr == "ci-trace-1234")
+        log_result("Observability Header (X-Request-ID Correlation)", is_ok, f"Header value: {req_id_hdr}")
+    except Exception as e:
+        log_result("Observability Header (X-Request-ID Correlation)", False, str(e))
+
     # ============================================================
     # 2. Document Parsing & Text Extraction Tests
     # ============================================================

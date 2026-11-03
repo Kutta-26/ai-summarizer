@@ -1,4 +1,6 @@
 import os
+import time
+from app.core.logging_config import get_logger, sanitize_filename
 
 try:
     import pymupdf as fitz
@@ -6,27 +8,35 @@ except ImportError:
     import fitz  # PyMuPDF fallback
 from docx import Document
 
+logger = get_logger("file")
+
 
 def extract_text(file_path: str) -> str:
     """
-    Detects the file type and extracts text.
+    Detects the file type, measures extraction latency, and extracts text.
     """
+    start_t = time.perf_counter()
     lower_path = file_path.lower()
+    safe_name = sanitize_filename(file_path)
 
     if lower_path.endswith(".txt"):
-        return extract_txt(file_path)
-
+        text = extract_txt(file_path)
+        ftype = "TXT"
     elif lower_path.endswith(".pdf"):
-        return extract_pdf(file_path)
-
+        text = extract_pdf(file_path)
+        ftype = "PDF"
     elif lower_path.endswith(".docx"):
-        return extract_docx(file_path)
-
+        text = extract_docx(file_path)
+        ftype = "DOCX"
     else:
         raise ValueError(
-            f"Unsupported file format for '{os.path.basename(file_path)}'. "
+            f"Unsupported file format for '{safe_name}'. "
             "Supported formats are TXT, PDF, and DOCX."
         )
+
+    elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+    logger.info(f"Extracted {len(text)} characters from {ftype} ({safe_name}) in {elapsed_ms:.1f}ms")
+    return text
 
 
 def extract_txt(file_path: str) -> str:

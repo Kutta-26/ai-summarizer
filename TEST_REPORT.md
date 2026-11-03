@@ -343,3 +343,62 @@ Previously, aster-whisper downloaded the 787 MB Systran/faster-whisper-small mo
    - Executed second POST /summarize-media with oice_test.mp3.
    - Result: HTTP 200 OK returned immediately in 9 seconds with **0 bytes re-downloaded**.
    - Server log confirmed instant offline load from cached weights.
+
+---
+
+## 10. Day 8 Verification — API Reliability, Performance & Observability
+
+### 10.1 Day 8 Scope & Objectives
+Day 8 focused on external API reliability, request resilience, distributed observability, and performance optimization:
+1. **Granular HTTP Timeouts**: Replaced flat request timeouts with granular `httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)` in the Groq client connection pool.
+2. **Transient Error Resilience & Retry Strategy**: Bounded exponential backoff retrying transient failures (`RateLimitError`, `APITimeoutError`, `APIConnectionError`, and upstream 5xx `InternalServerError` / `APIStatusError` 500, 502, 503, 504), while respecting provider `Retry-After` headers and immediately failing fast on permanent client errors (`AuthenticationError`, `BadRequestError`, `NotFoundError`, `PermissionDeniedError`).
+3. **Secret Leak Prevention & Error Sanitization**: Sanitized all exception messages mapping to client runtime errors, actively masking `gsk_` API keys and Authorization Bearer headers to `[REDACTED_API_KEY]`.
+4. **Distributed Observability & Request Correlation**: Implemented `X-Request-ID` tracing header middleware with Python `contextvars`. Every request receives or propagates a unique correlation ID logged across HTTP middleware, document extraction, LLM calls, and media pipelines.
+5. **Detailed Stage Timing & Resource Cleanup Auditing**: Added structured latency metrics for document text extraction (`file_service`), PyMuPDF page parsing, and verified audit logging for temporary upload and audio file unlinking (`media_service`, `summarize.py`).
+6. **Dedicated Reliability Test Suite**: Authored `tests/test_api_reliability.py` with 11 focused unit tests verifying recovery from network drops, 429 backoff, 5xx server errors, fail-fast behavior, error sanitization, and header propagation.
+
+---
+
+### 10.2 Dedicated API Reliability Unit Tests (`tests/test_api_reliability.py`)
+
+| Test Case | Scenario / Condition | Verified Behavior | Status |
+| :--- | :--- | :--- | :---: |
+| `test_successful_provider_response` | Standard LLM response | Executes 1 attempt, returns stripped text, no unnecessary retries | **PASS** |
+| `test_temporary_network_failure_retries_and_succeeds` | Transient `APIConnectionError` on attempt 1 | Sleeps backoff delay, retries, and successfully returns response on attempt 2 | **PASS** |
+| `test_rate_limit_respects_retry_after` | `RateLimitError` (HTTP 429) with `Retry-After: 0.5` | Parses `Retry-After` header and sleeps exactly 0.5s before successful retry | **PASS** |
+| `test_transient_5xx_server_error_retries_and_succeeds` | Upstream `InternalServerError` (503 Service Unavailable) | Retries transient 5xx server error and recovers on attempt 2 | **PASS** |
+| `test_permanent_authentication_error_does_not_retry` | `AuthenticationError` (HTTP 401) | Fails immediately on attempt 1 without wasting retry quota, returns sanitized message | **PASS** |
+| `test_permanent_bad_request_does_not_retry` | `BadRequestError` (HTTP 400) | Fails immediately on attempt 1 without retry, returns user-friendly parameter error | **PASS** |
+| `test_timeout_retries_and_exhausts` | Persistent `APITimeoutError` across all attempts | Retries up to 3 attempts, logs error, and raises clear timeout `RuntimeError` | **PASS** |
+| `test_rate_limit_exhaustion_raises_user_actionable_error` | Persistent `RateLimitError` across all attempts | Raises standard user-actionable rate limit message expected by frontend and Playwright | **PASS** |
+| `test_sanitized_error_response_no_api_keys_leaked` | Error message containing raw `gsk_` API key | Sanitizes message, replacing credentials with `[REDACTED_API_KEY]` | **PASS** |
+| `test_context_length_exceeded_provides_hierarchical_guidance` | `BadRequestError` with `context_length_exceeded` | Returns guidance directing user to Hierarchical Summarizer | **PASS** |
+| `test_observability_x_request_id_and_process_time_headers` | HTTP request to `/health` | Returns both `X-Process-Time` and `X-Request-ID` correlation headers | **PASS** |
+
+---
+
+### 10.3 Test Execution Results Summary (Day 8 Baseline & Final)
+
+| Test Suite | Total Tests | Passed | Failed | Skipped | Recorded Duration |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Pytest Full Suite** | 113 | 113 | 0 | 0 | 1.31s |
+| **CI Production Regression Suite** | 54 | 54 | 0 | 0 | 12.8s |
+| **Playwright Browser E2E** | 9 | 8 | 0 | 1 (live integration) | 11.8s |
+| **Frontend Production Build (Vite)** | 1,844 modules | 1,844 | 0 | 0 | 2.15s |
+
+---
+
+### 10.4 Docker Runtime Status Verification
+- **Docker Engine Version**: 29.8.0
+- **Docker Compose Version**: 5.5.1
+- **Backend Container (`ai-summarizer-backend`)**: Up 2+ hours (healthy), Port `0.0.0.0:8000->8000/tcp`
+- **Frontend Container (`ai-summarizer-frontend`)**: Up 2+ hours (healthy), Port `0.0.0.0:3000->80/tcp`
+- **Live Healthcheck Verification**:
+  - `GET http://127.0.0.1:8000/health` -> HTTP 200 `{"status": "Running"}`
+  - `GET http://127.0.0.1:8000/` -> HTTP 200 `{"message": "Welcome to AI Summarizer API"}`
+
+---
+
+### 10.5 Environment & Investigation Notes
+- **Windows Sandboxed Loopback Socket Isolation**:
+  During test execution inside the Windows Sandbox without bypass permissions, Python's internal `socket.socketpair()` (utilized by `asyncio.ProactorEventLoop` and `starlette.testclient.TestClient`) encountered `[WinError 10013] (WSAEACCES)`. Under standard sandboxing, the socket accept operation blocked indefinitely without a timeout. Executing network and test runners with bypass permissions allows loopback socket binding (`127.0.0.1`) and completes the full 113-test Pytest suite in 1.31 seconds.

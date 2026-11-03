@@ -1,21 +1,45 @@
 import os
 import logging
 import sys
+import contextvars
+from typing import Optional
 
 # ============================================================
-# STRUCTURED OBSERVABILITY LOGGING
+# STRUCTURED OBSERVABILITY LOGGING & CORRELATION IDS
 # ============================================================
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
+request_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("request_id", default=None)
+
+
+def set_request_id(req_id: str):
+    """Set the current asynchronous task's request correlation ID."""
+    return request_id_ctx.set(req_id)
+
+
+def get_request_id() -> Optional[str]:
+    """Retrieve the current request correlation ID if inside an active request."""
+    return request_id_ctx.get(None)
+
+
+class RequestIdFilter(logging.Filter):
+    """Injects active request correlation ID into the log record."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        req_id = request_id_ctx.get(None)
+        record.req_id_prefix = f"[{req_id}] " if req_id else ""
+        return True
+
+
 _formatter = logging.Formatter(
-    fmt="[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
+    fmt="[%(asctime)s] [%(levelname)s] [%(name)s]: %(req_id_prefix)s%(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
 # Standard stdout stream handler
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(_formatter)
+_handler.addFilter(RequestIdFilter())
 
 # Configure root logger
 _root_logger = logging.getLogger("ai_summarizer")

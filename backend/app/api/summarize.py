@@ -35,6 +35,19 @@ from app.services.youtube_service import fetch_youtube_transcript
 import os
 import re
 import uuid
+from app.core.logging_config import get_logger, sanitize_filename
+
+logger = get_logger("api")
+
+
+def cleanup_temp_file(path: str | None) -> None:
+    """Safely unlink temporary upload files with audit logging."""
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+            logger.info(f"Cleaned up temporary upload file: {os.path.basename(path)}")
+        except OSError as e:
+            logger.warning(f"Could not remove temporary file {path}: {e}")
 
 
 router = APIRouter()

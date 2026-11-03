@@ -375,5 +375,8 @@ def transcribe_media(media_path: str) -> str:
             and audio_path != media_path
             and os.path.exists(audio_path)
         ):
-
-            os.remove(audio_path)
+            try:
+                os.remove(audio_path)
+                logger.info(f"Cleaned up temporary extracted audio file: {os.path.basename(audio_path)}")
+            except OSError as e:
+                logger.warning(f"Failed to remove temporary audio file {audio_path}: {e}")
