@@ -57,8 +57,14 @@ def get_logger(name: str) -> logging.Logger:
 
 def sanitize_filename(filename: str) -> str:
     """
-    Sanitize uploaded filenames for safe logging without exposing path artifacts.
+    Sanitize uploaded filenames for safe logging without exposing path artifacts
+    or allowing log/CRLF injection.
     """
     if not filename:
         return "<unnamed>"
-    return os.path.basename(filename)
+    import re
+    # Normalize cross-platform separators and extract base filename
+    safe = os.path.basename(str(filename).replace("\\", "/"))
+    # Strip ASCII control characters and non-printable sequences
+    safe = re.sub(r"[\r\n\x00-\x1f\x7f-\x9f]", "", safe).strip()
+    return safe or "<unnamed>"

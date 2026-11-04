@@ -213,15 +213,16 @@ CONTRADICTION_RESPONSES = {
 def validate_file(file: UploadFile):
     """
     Validate uploaded file type and filename.
+    Rejects null bytes, CRLF control characters, and enforces allowed extensions.
     """
     raw_name = file.filename or ""
-    if "\0" in raw_name or "%00" in raw_name.lower():
+    if "\0" in raw_name or "%00" in raw_name.lower() or "\r" in raw_name or "\n" in raw_name or "%0d" in raw_name.lower() or "%0a" in raw_name.lower():
         raise HTTPException(
             status_code=400,
             detail="Filename contains invalid characters."
         )
 
-    safe_filename = os.path.basename(raw_name).strip()
+    safe_filename = os.path.basename(raw_name.replace("\\", "/")).strip()
     if not safe_filename:
         raise HTTPException(
             status_code=400,
@@ -257,7 +258,7 @@ def save_uploaded_file(file: UploadFile, max_size: int = MAX_FILE_SIZE) -> str:
         exist_ok=True
     )
 
-    safe_filename = os.path.basename(file.filename or "")
+    safe_filename = os.path.basename((file.filename or "").replace("\\", "/"))
     extension = os.path.splitext(
         safe_filename
     )[1].lower()
@@ -301,9 +302,10 @@ def save_uploaded_file(file: UploadFile, max_size: int = MAX_FILE_SIZE) -> str:
     except Exception as e:
         if os.path.exists(file_path):
             os.remove(file_path)
+        logger.error(f"Failed to save uploaded file: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to save uploaded file: {str(e)}"
+            detail="Failed to save uploaded file due to an internal server error."
         ) from e
 
     # --------------------------------------------------------

@@ -85,7 +85,9 @@ def extract_pdf(file_path: str) -> str:
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"Failed to extract text from PDF: {str(e)}") from e
+        import re
+        clean_msg = re.sub(r"['\"][^'\"]*[\\/][^'\"]*['\"]", "'<document>'", str(e))
+        raise ValueError(f"Failed to extract text from PDF: {clean_msg}") from e
 
 
 def extract_docx(file_path: str) -> str:
@@ -109,4 +111,6 @@ def extract_docx(file_path: str) -> str:
 
         return "\n".join(text_parts)
     except Exception as e:
-        raise ValueError(f"Failed to extract text from DOCX: {str(e)}") from e
+        import re
+        clean_msg = re.sub(r"['\"][^'\"]*[\\/][^'\"]*['\"]", "'<document>'", str(e))
+        raise ValueError(f"Failed to extract text from DOCX: {clean_msg}") from e

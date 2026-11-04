@@ -142,6 +142,9 @@ async def record_process_time(request: Request, call_next):
         duration = time.perf_counter() - start_time
         response.headers["X-Process-Time"] = f"{duration:.4f}s"
         response.headers["X-Request-ID"] = req_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({duration * 1000.0:.1f}ms)")
         return response
     finally:
@@ -161,6 +164,7 @@ app.add_middleware(
     allow_credentials=allow_creds,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Process-Time", "X-Request-ID"],
 )
 
 

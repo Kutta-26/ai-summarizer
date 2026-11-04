@@ -538,3 +538,77 @@ Day 10 focused on full-stack Docker container deployment, container runtime heal
 | **CI Production Regression Suite** | `.\.venv\Scripts\python.exe tests\test_suite.py --ci` | 55 | 55 | 0 | 0 | ~6.8s | 0 |
 | **Playwright Browser E2E** | `npm --prefix frontend run test:e2e` | 11 | 10 | 0 | 1 *(Live Groq test)* | 15.7s | 0 |
 | **Frontend Production Build (Vite)** | `npm --prefix frontend run build` | 1,844 modules | 1,844 | 0 | 0 | 2.08s | 0 |
+
+
+---
+
+## 13. Day 11 Verification — Final Security Audit, Production Configuration & Release Documentation
+
+### 13.1 Day 11 Scope & Objectives
+Day 11 was dedicated to conducting an exhaustive application security, configuration, and production-readiness audit across the full-stack AI Summarizer repository:
+1. **Audit Scope**:
+   - **Secret Management**: Verified environment-based credential loading, exclusion of `.env` files from Git and Docker contexts, absence of hardcoded keys, and secret masking in runtime logs and error responses.
+   - **CORS Configuration**: Audited allowed origins, verified absence of wildcard credentials, and ensured observability headers (`X-Request-ID`, `X-Process-Time`) are explicitly exposed to client browsers.
+   - **Upload & File Handling Security**: Audited extension whitelisting, streaming chunk size validation (10 MB limit), null-byte rejection, CRLF header injection, cross-platform path traversal normalization, and temporary file lifecycle semantics.
+   - **Information Disclosure Prevention**: Verified that error responses do not leak internal filesystem paths, stack traces, database artifacts, or upstream provider payloads (CWE-209).
+   - **Resource Exhaustion Guards**: Audited document character bounds (60k character single-pass limit, 100k character faithfulness/contradiction limit), 120s FFmpeg subprocess timeout, and faster-whisper CPU thread safety.
+   - **Docker & Nginx Hardening**: Inspected Nginx configuration, static asset caching headers, server version disclosure (`server_tokens`), and container privileges.
+2. **Implementation of Verified Hardening Fixes**:
+   - Applied narrowly scoped, evidence-based security hardening without breaking existing API contracts or workflows.
+3. **Dedicated Security Regression Suite**:
+   - Authored `tests/test_security_hardening.py` featuring 10 targeted automated tests covering security headers, CORS expose-headers, filename CRLF injection, null-byte rejection, path traversal normalization, error path masking, and log sanitization.
+4. **End-to-End Pipeline Verification**:
+   - Verified that all 135 unit tests, 55 CI checks, 10 deterministic Playwright browser E2E tests, and the Vite production build pass with 100% success.
+   - Rebuilt and validated the running Docker Compose stack with live probes.
+
+---
+
+### 13.2 Security Audit Findings & Classification Matrix
+
+| Area | Finding | Severity / Risk | Status | Evidence & Applied Remediation |
+| :--- | :--- | :---: | :---: | :--- |
+| **Nginx Server Header** | Nginx version (`nginx/1.31.8`) was exposed in HTTP response headers | Low (Information Disclosure) | **FIXED** | Added `server_tokens off;` to `frontend/nginx.conf`. Live probe confirms `Server: nginx` without version number. |
+| **Nginx Static Asset Security Headers** | Static assets location block (`location ~* \.(?:css\|js...)$`) had `add_header Cache-Control`, suppressing parent security headers | Medium (Framing / MIME Confusion) | **FIXED** | Added `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, and `Referrer-Policy` directly inside the static asset location block. Verified with live asset probe. |
+| **FastAPI Backend Security Headers** | Direct backend responses (port 8000) lacked standard defensive security headers | Medium (MIME Sniffing & Framing) | **FIXED** | Injected `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin` into `record_process_time` HTTP middleware in `backend/main.py`. |
+| **CORS Observability Exposure** | `CORSMiddleware` did not expose custom headers (`X-Process-Time`, `X-Request-ID`) to cross-origin browsers | Low (Client Observability) | **FIXED** | Added `expose_headers=["X-Process-Time", "X-Request-ID"]` to `CORSMiddleware` in `backend/main.py`. |
+| **Media Filename Validation** | `validate_media_file` did not check for null bytes, CRLF characters, or cross-platform backslashes | Medium (CRLF / Log Injection) | **FIXED** | Hardened `validate_media_file` in `media_service.py` to reject `\0`, `%00`, `\r`, `\n`, `%0d`, `%0a`, and normalize backslashes before extension extraction. |
+| **Document Filename CRLF Injection** | `validate_file` in `summarize.py` checked for null bytes but did not reject CRLF characters | Low (CRLF / Header Injection) | **FIXED** | Updated `validate_file` in `summarize.py` to reject filenames containing `\r`, `\n`, `%0d`, or `%0a`. |
+| **Internal Storage Path Masking** | Storage exceptions in `save_uploaded_file`, `extract_docx`, and `extract_pdf` could expose internal disk paths | Medium (CWE-209 Path Disclosure) | **FIXED** | Masked exception messages in `save_uploaded_file` to `"Failed to save uploaded file due to an internal server error."`, and sanitized quoted filesystem paths to `'<document>'` in `file_service.py`. |
+| **Log Injection via Filename Logging** | `sanitize_filename` used `os.path.basename` without filtering non-printable control characters | Low (Log Injection) | **FIXED** | Stripped non-printable ASCII characters and CRLF control codes in `logging_config.sanitize_filename`. |
+
+---
+
+### 13.3 Dedicated Security Regression Suite (`tests/test_security_hardening.py`)
+
+| Test Identifier | Test Target | Verified Security Behavior | Status |
+| :--- | :--- | :--- | :---: |
+| `test_security_headers_present_on_fastapi_responses` | HTTP Middleware | Standard security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`) present on `/health` | **PASS** |
+| `test_cors_expose_headers_configuration` | CORS Configuration | CORS response includes `Access-Control-Expose-Headers` for `X-Process-Time` and `X-Request-ID` | **PASS** |
+| `test_filename_crlf_injection_rejected` | `validate_file` | Filenames containing CRLF characters (`report.txt\r\n...`) are rejected with HTTP 400 | **PASS** |
+| `test_filename_null_byte_rejected` | `validate_file` | Filenames containing null bytes (`report.txt\x00.exe`) are rejected with HTTP 400 | **PASS** |
+| `test_media_filename_sanitization_and_validation` | `validate_media_file` | Media filenames with null bytes or CRLF are rejected with ValueError; Windows paths are normalized | **PASS** |
+| `test_path_traversal_filename_normalized_safely` | `save_uploaded_file` | Path traversal filenames (`../../../../etc/passwd.txt`) are normalized to safe UUIDs on disk | **PASS** |
+| `test_docx_error_masks_internal_filesystem_paths` | `extract_docx` | Corrupt DOCX parsing errors replace internal absolute paths with `'<document>'` | **PASS** |
+| `test_save_uploaded_file_masks_internal_storage_paths` | `save_uploaded_file` | Unhandled disk I/O errors return generic HTTP 500 without disclosing internal directory paths | **PASS** |
+| `test_sanitize_filename_strips_control_characters_and_paths` | `sanitize_filename` | Strips directory paths, control characters, CRLF, and null bytes for safe audit logging | **PASS** |
+| `test_missing_groq_api_key_fails_safely` | `get_groq_client` | Missing `GROQ_API_KEY` raises controlled `RuntimeError` without unhandled crashes | **PASS** |
+
+---
+
+### 13.4 Comprehensive Test Execution Matrix (Day 11 Final)
+
+| Test Suite Name | Execution Command | Total Tests | Passed | Failed | Skipped | Recorded Duration | Exit Code |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Pytest Full Unit Suite** | `.\.venv\Scripts\python.exe -m pytest` | 135 | 135 | 0 | 0 | 1.71s | 0 |
+| **CI Production Regression Suite** | `.\.venv\Scripts\python.exe tests\test_suite.py --ci` | 55 | 55 | 0 | 0 | ~6.8s | 0 |
+| **Playwright Browser E2E** | `npm --prefix frontend run test:e2e` | 11 | 10 | 0 | 1 *(Live Groq test)* | 13.0s | 0 |
+| **Frontend Production Build (Vite)** | `npm --prefix frontend run build` | 1,844 modules | 1,844 | 0 | 0 | 1.71s | 0 |
+
+---
+
+### 13.5 Docker Deployment & Live Security Verification
+- **Backend Container (`ai-summarizer-backend`)**: Up and **healthy** on port `8000`.
+  - Live probe confirmed `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Process-Time`, and `X-Request-ID`.
+- **Frontend Container (`ai-summarizer-frontend`)**: Up and **healthy** on port `3000`.
+  - Live probe confirmed Nginx version suppression (`Server: nginx`) and security headers on both HTML and fingerprinted static assets (`/assets/index-CA0HXFog.css`).
+- **Real Workflow Test**: Executed `POST /summarize` with `antigravity_overview.txt`; completed in 0.77s with full Groq LLM synthesis and verified zero credential leakage.

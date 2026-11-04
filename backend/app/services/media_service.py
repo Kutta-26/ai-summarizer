@@ -116,7 +116,8 @@ def get_whisper_model():
 
 def validate_media_file(filename: str):
     """
-    Validate the uploaded audio/video file extension.
+    Validate the uploaded audio/video file extension and sanitize filename.
+    Rejects null bytes, CRLF control characters, and enforces allowed media formats.
     """
 
     if not filename or not filename.strip():
@@ -124,9 +125,15 @@ def validate_media_file(filename: str):
             "No media filename was provided."
         )
 
-    extension = os.path.splitext(
-        filename.strip()
-    )[1].lower()
+    if "\0" in filename or "%00" in filename.lower() or "\r" in filename or "\n" in filename or "%0d" in filename.lower() or "%0a" in filename.lower():
+        raise ValueError(
+            "Filename contains invalid characters."
+        )
+
+    raw_name = filename.strip()
+
+    safe_name = os.path.basename(raw_name.replace("\\", "/"))
+    extension = os.path.splitext(safe_name)[1].lower()
 
     if extension not in ALLOWED_MEDIA_EXTENSIONS:
 
