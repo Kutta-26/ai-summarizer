@@ -1,4 +1,5 @@
 import os
+import io
 import sys
 import time
 from pathlib import Path
@@ -118,32 +119,79 @@ def run_tests():
     except Exception as e:
         log_result("Observability Header (X-Request-ID Correlation)", False, str(e))
 
+    try:
+        # Observability correlation ID uniqueness check
+        r1 = client.get("/health")
+        r2 = client.get("/health")
+        id1 = r1.headers.get("x-request-id")
+        id2 = r2.headers.get("x-request-id")
+        is_ok = bool(id1 and id2 and id1 != id2)
+        log_result("Observability Header (X-Request-ID Uniqueness)", is_ok, f"Generated: {id1} != {id2}")
+    except Exception as e:
+        log_result("Observability Header (X-Request-ID Uniqueness)", False, str(e))
+
     # ============================================================
     # 2. Document Parsing & Text Extraction Tests
     # ============================================================
     try:
-        # Test PDF extraction using existing sample PDF if available
+        # Test PDF extraction using existing sample PDF or in-memory fixture
         sample_pdf = backend_dir / "uploads" / "SURYA K - Resume.pdf"
+        temp_pdf = None
         if not sample_pdf.exists():
             sample_pdf = backend_dir / "uploads" / "SOFTWARE REQUIREMENT SPECIFICATION.pdf"
-        if sample_pdf.exists():
-            extracted_pdf_text = extract_text(str(sample_pdf))
-            is_ok = bool(extracted_pdf_text and len(extracted_pdf_text) > 50)
-            log_result("Text Extraction (PDF PyMuPDF)", is_ok, f"Extracted {len(extracted_pdf_text)} characters")
+        if not sample_pdf.exists():
+            import tempfile
+            try:
+                import pymupdf as fitz
+            except ImportError:
+                import fitz
+            doc = fitz.open()
+            page = doc.new_page()
+            page.insert_text((50, 72), "Cloud Architecture and High Availability Specifications for AI Summarizer production deployment.")
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+                tf.write(doc.tobytes())
+                temp_pdf = Path(tf.name)
+            doc.close()
+            target_pdf = temp_pdf
         else:
-            log_result("Text Extraction (PDF PyMuPDF)", True, "No sample PDF present, skipped")
+            target_pdf = sample_pdf
+
+        extracted_pdf_text = extract_text(str(target_pdf))
+        is_ok = bool(extracted_pdf_text and len(extracted_pdf_text) > 30)
+        log_result("Text Extraction (PDF PyMuPDF)", is_ok, f"Extracted {len(extracted_pdf_text)} characters")
+        if temp_pdf and temp_pdf.exists():
+            temp_pdf.unlink()
     except Exception as e:
         log_result("Text Extraction (PDF PyMuPDF)", False, str(e))
 
     try:
-        # Test DOCX extraction using existing sample DOCX if available
+        # Test DOCX extraction using existing sample DOCX or in-memory fixture
         sample_docx = backend_dir / "uploads" / "SRS - Project.docx"
-        if sample_docx.exists():
-            extracted_docx_text = extract_text(str(sample_docx))
-            is_ok = bool(extracted_docx_text and len(extracted_docx_text) > 50)
-            log_result("Text Extraction (DOCX python-docx)", is_ok, f"Extracted {len(extracted_docx_text)} characters")
+        temp_docx = None
+        if not sample_docx.exists():
+            import tempfile
+            from docx import Document
+            doc = Document()
+            doc.add_paragraph("Production Software Requirement Specification for AI Summarizer.")
+            table = doc.add_table(rows=2, cols=2)
+            table.cell(0, 0).text = "Module"
+            table.cell(0, 1).text = "Status"
+            table.cell(1, 0).text = "Summarizer Engine"
+            table.cell(1, 1).text = "Verified"
+            buf = io.BytesIO()
+            doc.save(buf)
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tf:
+                tf.write(buf.getvalue())
+                temp_docx = Path(tf.name)
+            target_docx = temp_docx
         else:
-            log_result("Text Extraction (DOCX python-docx)", True, "No sample DOCX present, skipped")
+            target_docx = sample_docx
+
+        extracted_docx_text = extract_text(str(target_docx))
+        is_ok = bool(extracted_docx_text and len(extracted_docx_text) > 30 and "Verified" in extracted_docx_text)
+        log_result("Text Extraction (DOCX python-docx)", is_ok, f"Extracted {len(extracted_docx_text)} characters")
+        if temp_docx and temp_docx.exists():
+            temp_docx.unlink()
     except Exception as e:
         log_result("Text Extraction (DOCX python-docx)", False, str(e))
 

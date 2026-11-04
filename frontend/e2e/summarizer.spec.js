@@ -363,4 +363,89 @@ test.describe('AI Summarizer — End-to-End Application Suite', () => {
     await expect(offlineBanner).toContainText('Backend is currently offline or unreachable');
   });
 
+  // ============================================================
+  // 9. KEY POINTS TAB WORKFLOW
+  // ============================================================
+  test('9. Key Points extraction tab workflow with custom point count', async ({ page }) => {
+    // Navigate to Key Points tab
+    await page.locator('.tab-btn', { hasText: 'Key Points' }).click();
+    await expect(page.locator('.tab-btn-active')).toContainText('Key Points');
+
+    // Mock /key-points response
+    const mockPoints = [
+      'Cloud adoption accelerated by 45% year-over-year.',
+      'Microservices reduced mean deployment overhead to 42ms.',
+    ];
+    await page.route('**/key-points', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ key_points: mockPoints }),
+      });
+    });
+
+    // Upload file
+    const fileInput = page.locator('input[type="file"]').first();
+    await fileInput.setInputFiles({
+      name: 'metrics.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Source document containing cloud adoption metrics.'),
+    });
+
+    // Submit extraction
+    const submitBtn = page.locator('button[type="submit"]', { hasText: 'Extract Key Points' });
+    await expect(submitBtn).toBeEnabled();
+    await submitBtn.click();
+
+    // Verify key points card and items
+    await expect(page.locator('.summary-card')).toBeVisible();
+    await expect(page.locator('.summary-title')).toHaveText('Extracted Key Points (2)');
+    const items = page.locator('.keypoint-item');
+    await expect(items).toHaveCount(2);
+    await expect(items.first().locator('.keypoint-text')).toHaveText(mockPoints[0]);
+    await expect(items.nth(1).locator('.keypoint-text')).toHaveText(mockPoints[1]);
+  });
+
+  // ============================================================
+  // 10. COMPARE DOCUMENTS TAB WORKFLOW
+  // ============================================================
+  test('10. Compare Documents tab workflow with dual file selection', async ({ page }) => {
+    // Navigate to Compare Documents tab
+    await page.locator('.tab-btn', { hasText: 'Compare Documents' }).click();
+    await expect(page.locator('.tab-btn-active')).toContainText('Compare Documents');
+
+    // Mock /compare response
+    const mockComparison = 'Similarities:\n- Both platforms implement containerized microservices.\n\nDifferences:\n- Architecture A uses synchronous REST, while Architecture B uses an asynchronous event bus.';
+    await page.route('**/compare', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ summary: mockComparison }),
+      });
+    });
+
+    // Upload Document A and Document B
+    await page.locator('.compare-grid .form-group').first().locator('input[type="file"]').setInputFiles({
+      name: 'system_a.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('System A utilizes synchronous REST architecture.'),
+    });
+    await page.locator('.compare-grid .form-group').nth(1).locator('input[type="file"]').setInputFiles({
+      name: 'system_b.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('System B utilizes an asynchronous event bus architecture.'),
+    });
+
+    // Submit comparison
+    const submitBtn = page.locator('button[type="submit"]', { hasText: 'Compare Both Documents' });
+    await expect(submitBtn).toBeEnabled();
+    await submitBtn.click();
+
+    // Verify comparison report rendered
+    await expect(page.locator('.summary-card')).toBeVisible();
+    await expect(page.locator('.summary-title')).toContainText('system_a.txt vs system_b.txt');
+    await expect(page.locator('.summary-content')).toContainText('Similarities:');
+    await expect(page.locator('.summary-content')).toContainText('Differences:');
+  });
+
 });

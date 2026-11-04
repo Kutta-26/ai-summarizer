@@ -402,3 +402,63 @@ Day 8 focused on external API reliability, request resilience, distributed obser
 ### 10.5 Environment & Investigation Notes
 - **Windows Sandboxed Loopback Socket Isolation**:
   During test execution inside the Windows Sandbox without bypass permissions, Python's internal `socket.socketpair()` (utilized by `asyncio.ProactorEventLoop` and `starlette.testclient.TestClient`) encountered `[WinError 10013] (WSAEACCES)`. Under standard sandboxing, the socket accept operation blocked indefinitely without a timeout. Executing network and test runners with bypass permissions allows loopback socket binding (`127.0.0.1`) and completes the full 113-test Pytest suite in 1.31 seconds.
+
+
+---
+
+## 11. Day 9 Verification — Regression Coverage, Integration Verification & Release Readiness
+
+### 11.1 Day 9 Scope & Objectives
+Day 9 focused on conducting a thorough regression audit of the AI Summarizer project, identifying genuine coverage gaps across backend services and frontend workflows, hardening boundary cases, and performing full multi-tier verification:
+1. **Repository Audit & Gap Analysis**: Audited all existing test suites (`test_core_summarization.py`, `test_advanced_features.py`, `test_api_reliability.py`, `test_suite.py`, and Playwright E2E) against critical paths: single/multi-document summarization, key points, comparison, hierarchical processing, media transcription, input sanitization, encoding fallbacks, temporary file unlinking on failure, and request tracing.
+2. **Deterministic Regression Suite Authoring**: Authored `tests/test_regression_coverage.py` featuring 12 focused regression unit tests addressing uncovered edge cases:
+   - Safe unlinking of temporary files when downstream stages fail (`/compare`, `/summarize-multiple`, `/summarize-media`).
+   - Complex document parsing: DOCX table row extraction with ` | ` cell delimitation, TXT byte-order mark (`utf-8-sig`) and Latin-1 encodings, and encrypted/password-protected PDF rejection.
+   - Media processing branch routing: audio vs. video FFmpeg extraction, subprocess timeout handling, and `.wav` cleanup.
+   - Deterministic fast-paths: whitespace-normalized identical document comparison and delta summary.
+   - Observability contract: `X-Request-ID` uniqueness across sequential calls and persistence on HTTP 400/422 validation errors.
+3. **CI Pipeline Enhancement (`tests/test_suite.py`)**:
+   - Integrated dynamic in-memory test fixture generation using PyMuPDF (`fitz`) and `python-docx`, ensuring PDF and DOCX parser validation executes in all environments without requiring static external sample files.
+   - Added an explicit `X-Request-ID` uniqueness check across sequential health requests.
+   - Increased CI regression checks from 54 to 55 passing checks (100% success rate).
+4. **End-to-End Browser Regression Enhancement (`frontend/e2e/summarizer.spec.js`)**:
+   - Added Test 9: Key Points extraction tab workflow with custom point count (testing input changes and point card rendering).
+   - Added Test 10: Dual-document file upload and comparison report rendering in the Compare Documents tab.
+   - Increased deterministic Playwright tests from 8 to 10 passing tests (100% pass rate).
+
+---
+
+### 11.2 Dedicated Regression Test Suite (`tests/test_regression_coverage.py`)
+
+| Test Case | Target Component | Scenario / Edge Case | Status |
+| :--- | :--- | :--- | :---: |
+| `test_compare_documents_cleans_up_temp_files_on_llm_failure` | `POST /compare` | Unlinks both uploaded temporary files even when Groq LLM throws an unhandled `RuntimeError` | **PASS** |
+| `test_summarize_multiple_cleans_up_temp_files_on_extraction_failure` | `POST /summarize-multiple` | Unlinks all previously uploaded temporary files if a subsequent file fails extraction | **PASS** |
+| `test_summarize_media_cleans_up_temp_files_on_transcription_failure` | `POST /summarize-media` | Unlinks uploaded media file when Whisper transcription fails or raises an exception | **PASS** |
+| `test_extract_docx_includes_tables_and_paragraphs` | `file_service.extract_docx` | Extracts both paragraph text and structured table rows with ` \| ` cell delimiters | **PASS** |
+| `test_extract_txt_encodings_utf8_bom_and_latin1` | `file_service.extract_txt` | Decodes text files encoded with UTF-8 BOM (`utf-8-sig`) and Latin-1 fallback without crashing | **PASS** |
+| `test_extract_pdf_encrypted_file_raises_value_error` | `file_service.extract_pdf` | Detects password-protected / encrypted PDFs and raises clear, sanitized `ValueError` | **PASS** |
+| `test_transcribe_media_extracts_audio_for_video_and_cleans_wav` | `media_service.transcribe_media` | Routes video (`.mp4`) through FFmpeg audio extraction and guarantees `.wav` unlinking post-transcription | **PASS** |
+| `test_extract_audio_ffmpeg_timeout_handling` | `media_service.extract_audio` | Enforces 120s timeout on stalled FFmpeg subprocesses and unlinks orphaned `.wav` targets | **PASS** |
+| `test_request_id_uniqueness_across_sequential_requests` | HTTP Tracing Middleware | Verifies that 5 sequential requests generate 5 distinct, unique `X-Request-ID` UUID values | **PASS** |
+| `test_request_id_preserved_on_client_error_responses` | HTTP Tracing Middleware | Confirms `X-Request-ID` is returned in headers on HTTP 400 and HTTP 422 error responses | **PASS** |
+| `test_compare_fast_path_whitespace_normalization` | `POST /compare` | Fast-path detects identical content even when documents differ only by whitespace / trailing newlines | **PASS** |
+| `test_update_summary_fast_path_whitespace_normalization` | `POST /update-summary` | Fast-path detects identical content even when previous summary and text differ only by whitespace | **PASS** |
+
+---
+
+### 11.3 Multi-Tier Verification Results Summary (Day 9 Final)
+
+| Test Suite | Total Checks | Passed | Failed | Skipped | Execution Time | Exit Code |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Pytest Full Unit Suite** | 125 | 125 | 0 | 0 | 2.20s | 0 |
+| **CI Production Regression Suite** | 55 | 55 | 0 | 0 | ~6.8s | 0 |
+| **Playwright Browser E2E** | 11 | 10 | 0 | 1 (live integration) | 17.0s | 0 |
+| **Frontend Production Build (Vite)** | 1,844 modules | 1,844 | 0 | 0 | 2.39s | 0 |
+
+---
+
+### 11.4 Docker Runtime Status Verification
+- **Docker Engine Version**: 29.8.0
+- **Docker Daemon Status**: Stopped / Offline (`open //./pipe/docker_engine: The system cannot find the file specified`).
+- **Observation**: Docker Desktop was not active during this test verification session. Non-containerized backend and frontend verification completed successfully in native environments.
