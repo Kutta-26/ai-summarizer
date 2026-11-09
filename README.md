@@ -138,6 +138,19 @@ docker compose up --build
 
 # Run in detached mode
 docker compose up -d
+
+# Check running container health and status
+docker compose ps
+
+# View container logs
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# Stop containers without removing them
+docker compose stop
+
+# Graceful shutdown (stop and remove containers, networks)
+docker compose down
 ```
 - Frontend Web App: [http://localhost:3000](http://localhost:3000)
 - Backend Health Check: [http://localhost:8000/health](http://localhost:8000/health)
@@ -321,21 +334,34 @@ The repository includes an enterprise-grade GitHub Actions CI/CD workflow (`.git
 
 ## 🧪 Automated Testing
 
-The platform features a 32-test automated regression suite supporting both deterministic CI execution and live inference:
+The platform features comprehensive test automation spanning backend unit tests, end-to-end regression suites, and Playwright browser tests:
 
-### 1. Deterministic CI Mode (Offline / Mocked LLM)
-Runs instantly in CI/CD without external API keys or network dependencies:
+### 1. Backend Pytest Unit Test Suite (135 Tests)
+Executes across all modules (core summarization, advanced features, importance scoring, redundancy filtering, faithfulness verification, contradiction detection, API reliability, regression coverage, and security hardening):
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
+**Results**: `135 passed in 3.63s (100% success rate)`.
+
+### 2. CI Regression Test Suite (55 Tests)
+Runs deterministic end-to-end endpoint tests without external network or API key dependencies:
 ```powershell
 .\.venv\Scripts\python.exe tests\test_suite.py --ci
 ```
-**Results**: `32/32 PASSED (100% success rate)`.
+**Results**: `55/55 PASSED (100% success rate)`.
 
-### 2. Live Integration Mode (Full Live Inference)
+### 3. Frontend Playwright End-to-End Suite
+Exercises user flows, tab transitions, form validations, loading states, clipboard copying, and error alerts in a headless browser:
+```powershell
+npm --prefix frontend run test:e2e
+```
+**Results**: `10 passed, 1 skipped (live test requires LIVE_E2E=true)`.
+
+### 4. Live Integration Mode (Full Live Inference)
 Executes against the real Groq LLM API and local faster-whisper speech recognition:
 ```powershell
 .\.venv\Scripts\python.exe tests\test_suite.py
 ```
-**Results**: `32/32 PASSED (100% success rate)`.
 
 ---
 
@@ -343,10 +369,21 @@ Executes against the real Groq LLM API and local faster-whisper speech recogniti
 
 To produce a minified static build of the React application:
 ```powershell
-cd frontend
-npm run build
+npm --prefix frontend run build
 ```
-Build output is generated cleanly into `frontend/dist/` (0 errors, 0 warnings, 1,844 modules transformed in ~3s).
+Build output is generated cleanly into `frontend/dist/` (0 errors, 0 warnings, 1,844 modules transformed in ~2.6s).
+
+---
+
+## 🔧 Common Errors & Troubleshooting
+
+| Issue / Symptom | Root Cause | Solution |
+|:---|:---|:---|
+| `ffmpeg: command not found` or `FileNotFoundError: ffmpeg` | FFmpeg CLI is not installed or not in system `PATH` | Install FFmpeg via Chocolatey (`choco install ffmpeg`), winget (`winget install Gyan.FFmpeg`), or package manager, then verify with `ffmpeg -version`. |
+| `GROQ_API_KEY is not configured` (HTTP 500) | Missing or unpopulated `.env` file | Copy `backend/.env.example` to `backend/.env` and supply your Groq API key from [console.groq.com](https://console.groq.com). |
+| Port 8000 or 3000 already in use (`EADDRINUSE` / `Errno 10048`) | Existing Docker container or background uvicorn/node process | Stop conflicting processes, or run `docker compose down`, or change port bindings in `.env` / `docker-compose.yml`. |
+| `No transcript available for this video` (HTTP 400) | YouTube video does not have subtitles or is private/region-restricted | Verify the video has accessible English or auto-generated captions on YouTube. |
+| TestClient hang on loopback socket in Windows sandbox | Windows sandbox blocking loopback network socket binding | Run tests with elevated network permissions (`BypassSandbox: true` in Antigravity) or set `LIVE_E2E="false"` for offline testing. |
 
 ---
 
